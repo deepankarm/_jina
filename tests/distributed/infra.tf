@@ -1,5 +1,5 @@
 module "jinad" {
-  source       = "jina-ai/jinad-aws/jina"
+  source       = "github.com/jina-ai/terraform-jina-jinad-aws"
   debug        = "true"
   branch       = var.branch
   port         = var.port
