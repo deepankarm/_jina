@@ -24,14 +24,14 @@ jobs:
       - run: terraform init
         working-directory: ./tests/distributed
       - run: >
-          terraform plan \
-          -var='scriptpath=${{ env.SCRIPTPATH }}' \
+          terraform plan
+          -var='scriptpath=${{ env.SCRIPTPATH }}'
           -var='branch=${{ github.head_ref }}'
         working-directory: ./tests/distributed
       - name: Create remote instance
         run: >
-          terraform apply -auto-approve \
-          -var='scriptpath=${{ env.SCRIPTPATH }}' \
+          terraform apply -auto-approve
+          -var='scriptpath=${{ env.SCRIPTPATH }}'
           -var='branch=${{ github.head_ref }}'
         working-directory: ./tests/distributed
       - name: Set up Python ${{ matrix.python-version }}
@@ -53,7 +53,7 @@ jobs:
       - if: always()
         name: Destroy remote instances
         run: >
-          terraform destroy -auto-approve \
-          -var='scriptpath=${{ env.SCRIPTPATH }}' \
+          terraform destroy -auto-approve
+          -var='scriptpath=${{ env.SCRIPTPATH }}'
           -var='branch=${{ github.head_ref }}'
         working-directory: ./tests/distributed
