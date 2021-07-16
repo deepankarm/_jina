@@ -12,6 +12,8 @@ jobs:
     steps:
       - uses: actions/checkout@v2
       - run: |
+          echo "SCRIPTPATH=${PWD}/scripts/setup-jinad.sh" >> $GITHUB_ENV
+      - run: |
           ls
           pwd
       - name: Configure AWS Credentials
@@ -25,10 +27,10 @@ jobs:
           terraform_version: latest
       - run: terraform init
         working-directory: ./tests/distributed
-      - run: terraform plan
+      - run: terraform plan -var='scriptpath=${{ env.SCRIPTPATH }}'
         working-directory: ./tests/distributed
       - name: Create remote instance
-        run: terraform apply -auto-approve
+        run: terraform apply -auto-approve -var='scriptpath=${{ env.SCRIPTPATH }}'
         working-directory: ./tests/distributed
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v2

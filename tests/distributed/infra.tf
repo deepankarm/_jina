@@ -3,7 +3,7 @@ module "jinad" {
   debug        = "true"
   branch       = var.branch
   port         = var.port
-  scriptpath   = "./scripts/setup-jinad.sh"
+  scriptpath   = var.scriptpath
   instances = {
     CLOUDHOST1 : {
       type : "t2.micro"
@@ -44,3 +44,9 @@ variable "port" {
   default     = "8000"
 }
 
+variable "scriptpath" {
+  description = <<EOT
+    jinad setup script path (part of jina codebase)
+    EOT
+  type        = string
+}
