@@ -37,7 +37,7 @@ if [[ "$debug" = "true" ]]; then
             rm -rf "$DIR"
         fi
         echo -e "\n'debug' is true, and 'branch' is set to '${branch}. Building & running jinad!"
-        git clone https://github.com/jina-ai/jina.git && cd jina && git fetch && git checkout ${branch}
+        git clone https://github.com/deepankarm/jina.git && cd jina && git fetch && git checkout ${branch}
         docker build -f Dockerfiles/debianx.Dockerfile --build-arg PIP_TAG=daemon -t jinaai/jina:test-daemon .
         docker run --add-host host.docker.internal:host-gateway \
                 --name jinad \
