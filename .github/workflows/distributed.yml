@@ -11,7 +11,7 @@ jobs:
         python-version: [3.7]
     steps:
       - uses: actions/checkout@v2
-      - run: >
+      - run: |
           ls
           pwd
       - name: Configure AWS Credentials
