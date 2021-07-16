@@ -3,7 +3,7 @@ module "jinad" {
   debug        = "true"
   branch       = var.branch
   port         = var.port
-  scriptpath   = "scripts/setup-jinad.sh"
+  scriptpath   = "./scripts/setup-jinad.sh"
   instances = {
     CLOUDHOST1 : {
       type : "t2.micro"
