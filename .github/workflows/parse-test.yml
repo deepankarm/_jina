@@ -1,0 +1,14 @@
+name: Parse Test
+
+on: workflow_dispatch
+
+jobs:
+  abc:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          sudo apt-get -qq update && sudo apt-get install -qq -y jq curl
+          HOSTS='{"CLOUDHOST1":"54.159.191.218","CLOUDHOST2":"34.193.202.133"}'
+          echo $HOSTS
+          echo $(echo $HOSTS | jq -r "to_entries|map(\"\(.key)=\(.value|tostring)\")|.[]" )
+          
