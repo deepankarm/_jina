@@ -12,10 +12,12 @@ jobs:
     name: Deploy to Netlify
     runs-on: ubuntu-latest
     steps:
+      - run: |
+          echo "BRANCH_NAME=${{ github.event.inputs.branch }}" >> $GITHUB_ENV
       - uses: actions/checkout@v2
         with:
           repository: jina-ai/jina
-          ref: ${{ github.event.inputs.branch }}
+          ref: ${{ env.BRANCH_NAME }}
       - uses: actions/setup-python@v2
       - run: |
           python -m pip install --upgrade pip
@@ -26,4 +28,12 @@ jobs:
           build_directory: docs/_build/dirhtml
           install_command: pip install -r docs/requirements.txt
           build_command: bash ./docs/makedocs.sh
+          deploy_alias: ${{ env.BRANCH_NAME }}
+      - name: Status check
+        uses: Sibz/github-status-action@v1.1.1
+        with:
+          authToken: ${{ secrets.GITHUB_TOKEN }}
+          context: Netlify preview
+          state: success
+          target_url: https://${{ env.BRANCH_NAME }}--my-site.netlify.app
           
