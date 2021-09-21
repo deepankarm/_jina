@@ -28,7 +28,7 @@ jobs:
           npm i -g netlify-cli
           python -m pip install --upgrade pip
           pip install -r docs/requirements.txt
-          bash docs/makedocs.sh
+          bash docs/makedoc.sh
           netlify deploy --dir=docs/_build/dirhtml --message="Deploying docs to ${{ env.BRANCH_NAME }} branch"
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
