@@ -23,10 +23,6 @@ from ...types.message.common import ControlMessage
 from ...types.request import Request
 from ...types.routing.table import RoutingTable
 
-if False:
-    import multiprocessing
-    import threading
-
 
 class Zmqlet:
     """A `Zmqlet` object can send/receive data to/from ZeroMQ socket and invoke callback function. It
@@ -53,7 +49,7 @@ class Zmqlet:
             self.identity = args.zmq_identity
         else:
             self.identity = random_identity()
-        self.name = args.name or self.__class__.__name__
+        self.name = str(args.name) or self.__class__.__name__
         self.logger = logger
         self.send_recv_kwargs = vars(args)
         if ctrl_addr:
@@ -93,6 +89,11 @@ class Zmqlet:
 
         self.out_sockets = {}
         self._active = True
+        self._static_routing_table = args.static_routing_table
+        if args.static_routing_table:
+            self._routing_table = RoutingTable(args.routing_table)
+        else:
+            self._routing_table = None
 
     def _register_pollin(self):
         """Register :attr:`in_sock`, :attr:`ctrl_sock` and :attr:`out_sock` (if :attr:`out_sock_type` is zmq.ROUTER)
@@ -216,7 +217,6 @@ class Zmqlet:
                 for address in self.args.hosts_in_connect:
                     if in_connect is None:
                         host, port = address.split(':')
-
                         in_connect, _ = _init_socket(
                             ctx,
                             host,
@@ -286,6 +286,7 @@ class Zmqlet:
         )
 
     def _init_dynamic_out_socket(self, host_out, port_out):
+
         out_sock, _ = _init_socket(
             self.ctx,
             host_out,
@@ -311,7 +312,12 @@ class Zmqlet:
         return out_sock
 
     def _get_dynamic_next_routes(self, message):
-        routing_table = RoutingTable(message.envelope.routing_table)
+        # use our own static routing table if available, otherwise use the one in the message
+        routing_table = (
+            self._routing_table
+            if self._routing_table
+            else RoutingTable(message.envelope.routing_table)
+        )
         next_targets = routing_table.get_next_targets()
         next_routes = []
         for target, send_as_bind in next_targets:
@@ -332,7 +338,8 @@ class Zmqlet:
         for routing_table, out_sock in next_routes:
             new_envelope = jina_pb2.EnvelopeProto()
             new_envelope.CopyFrom(msg.envelope)
-            new_envelope.routing_table.CopyFrom(routing_table.proto)
+            if not self._static_routing_table:
+                new_envelope.routing_table.CopyFrom(routing_table.proto)
             new_message = Message(request=msg.request, envelope=new_envelope)
 
             new_message.envelope.receiver_id = (
@@ -429,7 +436,8 @@ class AsyncZmqlet(Zmqlet):
         for routing_table, out_sock in self._get_dynamic_next_routes(msg):
             new_envelope = jina_pb2.EnvelopeProto()
             new_envelope.CopyFrom(msg.envelope)
-            new_envelope.routing_table.CopyFrom(routing_table.proto)
+            if not self._static_routing_table:
+                new_envelope.routing_table.CopyFrom(routing_table.proto)
             new_message = Message(request=msg.request, envelope=new_envelope)
             asyncio.create_task(self._send_message_via(out_sock, new_message))
 
@@ -452,7 +460,9 @@ class AsyncZmqlet(Zmqlet):
         :return: Received protobuf message. Or None in case of any error.
         """
         try:
-            msg = await recv_message_async(self.in_sock, **self.send_recv_kwargs)
+            msg = await recv_message_async(
+                self.in_connect_sock or self.in_sock, **self.send_recv_kwargs
+            )
             self.msg_recv += 1
             if msg is not None:
                 self.bytes_recv += msg.size
@@ -480,12 +490,10 @@ class ZmqStreamlet(Zmqlet):
 
     def __init__(
         self,
-        ready_event: Union['multiprocessing.Event', 'threading.Event'],
         *args,
         **kwargs,
     ):
         super().__init__(**kwargs)
-        self.is_ready_event = ready_event
 
     def _register_pollin(self):
         """Register :attr:`in_sock`, :attr:`ctrl_sock` and :attr:`out_sock` in poller."""
@@ -494,7 +502,6 @@ class ZmqStreamlet(Zmqlet):
 
             get_or_reuse_loop()
             self.io_loop = tornado.ioloop.IOLoop.current()
-        self.io_loop.add_callback(callback=lambda: self.is_ready_event.set())
         self.in_sock = ZMQStream(self.in_sock, self.io_loop)
         self.out_sock = ZMQStream(self.out_sock, self.io_loop)
         self.ctrl_sock = ZMQStream(self.ctrl_sock, self.io_loop)
@@ -570,7 +577,7 @@ class ZmqStreamlet(Zmqlet):
             self.in_sock.on_recv(self._in_sock_callback)
             self.is_polling_paused = False
 
-    def start(self, callback: Callable[['Message'], 'Message']):
+    def start(self, callback: Callable[['Message'], None]):
         """
         Open all sockets and start the ZMQ context associated to this `Zmqlet`.
 
@@ -582,10 +589,7 @@ class ZmqStreamlet(Zmqlet):
             self.bytes_recv += msg.size
             self.msg_recv += 1
 
-            msg = callback(msg)
-
-            if msg:
-                self.send_message(msg)
+            callback(msg)
 
         self._in_sock_callback = lambda x: _callback(x, self.in_sock_type)
         self.in_sock.on_recv(self._in_sock_callback)

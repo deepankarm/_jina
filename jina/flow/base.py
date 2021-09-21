@@ -1,11 +1,13 @@
 import argparse
 import base64
 import copy
+import itertools
 import json
 import os
 import re
-import socket
+import sys
 import threading
+import time
 import uuid
 import warnings
 from collections import OrderedDict
@@ -16,8 +18,19 @@ from .builder import allowed_levels, _hanging_pods
 from .. import __default_host__
 from ..clients import Client
 from ..clients.mixin import AsyncPostMixin, PostMixin
-from ..enums import FlowBuildLevel, PodRoleType, FlowInspectType, GatewayProtocolType
-from ..excepts import FlowTopologyError, FlowMissingPodError, RoutingTableCyclicError
+from ..enums import (
+    FlowBuildLevel,
+    PodRoleType,
+    FlowInspectType,
+    GatewayProtocolType,
+    InfrastructureType,
+)
+from ..excepts import (
+    FlowTopologyError,
+    FlowMissingPodError,
+    RoutingTableCyclicError,
+    RuntimeFailToStart,
+)
 from ..helper import (
     colored,
     get_public_ip,
@@ -27,9 +40,11 @@ from ..helper import (
     download_mermaid_url,
     CatchAllCleanupContextManager,
 )
-from ..jaml import JAMLCompatible
+from ..jaml import JAMLCompatible, JAML
+
 from ..logging.logger import JinaLogger
 from ..parsers import set_gateway_parser, set_pod_parser, set_client_cli_parser
+from ..parsers.flow import set_flow_parser
 from ..peapods import CompoundPod, Pod
 from ..peapods.pods.factory import PodFactory
 from ..types.routing.table import RoutingTable
@@ -52,6 +67,12 @@ if False:
     from .asyncio import AsyncFlow
 
 GATEWAY_NAME = 'gateway'
+FALLBACK_PARSERS = [
+    set_gateway_parser(),
+    set_pod_parser(),
+    set_client_cli_parser(),
+    set_flow_parser(),
+]
 
 
 class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
@@ -61,9 +82,11 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
     @overload
     def __init__(
         self,
+        *,
         asyncio: Optional[bool] = False,
         host: Optional[str] = '0.0.0.0',
-        port_expose: Optional[int] = None,
+        https: Optional[bool] = False,
+        port: Optional[int] = None,
         protocol: Optional[str] = 'GRPC',
         proxy: Optional[bool] = False,
         **kwargs,
@@ -72,7 +95,8 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
 
         :param asyncio: If set, then the input and output of this Client work in an asynchronous manner.
         :param host: The host address of the runtime, by default it is 0.0.0.0.
-        :param port_expose: The port of the host exposed to the public
+        :param https: If set, connect to gateway using https
+        :param port: The port of the Gateway, which the client should connect to.
         :param protocol: Communication protocol between server and client.
         :param proxy: If set, respect the http_proxy and https_proxy environment variables. otherwise, it will unset these proxy variables before start. gRPC seems to prefer no proxy
 
@@ -87,6 +111,7 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
     @overload
     def __init__(
         self,
+        *,
         compress: Optional[str] = 'NONE',
         compress_min_bytes: Optional[int] = 1024,
         compress_min_ratio: Optional[float] = 1.1,
@@ -105,6 +130,7 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
         log_config: Optional[str] = None,
         memory_hwm: Optional[int] = -1,
         name: Optional[str] = 'gateway',
+        native: Optional[bool] = False,
         no_crud_endpoints: Optional[bool] = False,
         no_debug_endpoints: Optional[bool] = False,
         on_error_strategy: Optional[str] = 'IGNORE',
@@ -119,6 +145,7 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
         py_modules: Optional[List[str]] = None,
         quiet: Optional[bool] = False,
         quiet_error: Optional[bool] = False,
+        runs_in_docker: Optional[bool] = False,
         runtime_backend: Optional[str] = 'PROCESS',
         runtime_cls: Optional[str] = 'GRPCRuntime',
         socket_in: Optional[str] = 'PULL_CONNECT',
@@ -126,12 +153,15 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
         ssh_keyfile: Optional[str] = None,
         ssh_password: Optional[str] = None,
         ssh_server: Optional[str] = None,
+        static_routing_table: Optional[bool] = False,
         timeout_ctrl: Optional[int] = 5000,
         timeout_ready: Optional[int] = 600000,
         title: Optional[str] = None,
         uses: Optional[Union[str, Type['BaseExecutor'], dict]] = 'BaseExecutor',
         uses_metas: Optional[dict] = None,
+        uses_requests: Optional[dict] = None,
         uses_with: Optional[dict] = None,
+        uvicorn_kwargs: Optional[dict] = None,
         workspace: Optional[str] = None,
         zmq_identity: Optional[str] = None,
         **kwargs,
@@ -167,6 +197,7 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
           - ...
 
           When not given, then the default naming strategy will apply.
+        :param native: If set, only native Executors is allowed, and the Executor is always run inside ZEDRuntime.
         :param no_crud_endpoints: If set, /index, /search, /update, /delete endpoints are removed from HTTP interface.
 
                   Any executor that has `@requests(on=...)` bind with those values will receive data requests.
@@ -180,7 +211,7 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
           Note, `IGNORE`, `SKIP_EXECUTOR` and `SKIP_HANDLE` do not guarantee the success execution in the sequel flow. If something
           is wrong in the upstream, it is hard to carry this exception and moving forward without any side-effect.
         :param port_ctrl: The port for controlling the runtime, default a random port between [49152, 65535]
-        :param port_expose: The port of the host exposed to the public
+        :param port_expose: The port that the gateway exposes for clients for GRPC connections.
         :param port_in: The port for input data, default a random port between [49152, 65535]
         :param port_out: The port for output data, default a random port between [49152, 65535]
         :param prefetch: The number of pre-fetched requests from the client
@@ -189,12 +220,13 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
         :param proxy: If set, respect the http_proxy and https_proxy environment variables. otherwise, it will unset these proxy variables before start. gRPC seems to prefer no proxy
         :param py_modules: The customized python modules need to be imported before loading the executor
 
-          Note, when importing multiple files and there is a dependency between them, then one has to write the dependencies in
-          reverse order. That is, if `__init__.py` depends on `A.py`, which again depends on `B.py`, then you need to write:
-
-          --py-modules __init__.py --py-modules B.py --py-modules A.py
+          Note that the recommended way is to only import a single module - a simple python file, if your
+          executor can be defined in a single file, or an ``__init__.py`` file if you have multiple files,
+          which should be structured as a python package. For more details, please see the
+          `Executor cookbook <https://docs.jina.ai/fundamentals/executor/repository-structure/>`__
         :param quiet: If set, then no log will be emitted from this object.
         :param quiet_error: If set, then exception stack information will not be added to the log
+        :param runs_in_docker: Informs a Pea that runs in a container. Important to properly set networking information
         :param runtime_backend: The parallel backend of the runtime inside the Pea
         :param runtime_cls: The runtime class to run inside the Pea
         :param socket_in: The socket type for input port
@@ -202,6 +234,7 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
         :param ssh_keyfile: This specifies a key to be used in ssh login, default None. regular default ssh keys will be used without specifying this argument.
         :param ssh_password: The ssh password to the ssh server.
         :param ssh_server: The SSH server through which the tunnel will be created, can actually be a fully specified `user@server:port` ssh url.
+        :param static_routing_table: Defines if the routing table should be pre computed by the Flow. In this case it is statically defined for each Pod and not send on every data request. Can not be used in combination with external pods
         :param timeout_ctrl: The timeout in milliseconds of the control request, -1 for waiting forever
         :param timeout_ready: The timeout in milliseconds of a Pea waits for the runtime to be ready, -1 for waiting forever
         :param title: The title of this HTTP server. It will be used in automatics docs such as Swagger UI.
@@ -216,7 +249,11 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
                   - a Python dict that represents the config
                   - a text file stream has `.read()` interface
         :param uses_metas: Dictionary of keyword arguments that will override the `metas` configuration in `uses`
+        :param uses_requests: Dictionary of keyword arguments that will override the `requests` configuration in `uses`
         :param uses_with: Dictionary of keyword arguments that will override the `with` configuration in `uses`
+        :param uvicorn_kwargs: Dictionary of kwargs arguments that will be passed to Uvicorn server when starting the server
+
+          More details can be found in Uvicorn docs: https://www.uvicorn.org/settings/
         :param workspace: The working directory for any IO operations in this object. If not set, then derive from its parent `workspace`.
         :param zmq_identity: The identity of a ZMQRuntime. It is used for unique socket identification towards other ZMQRuntimes.
 
@@ -230,12 +267,14 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
     @overload
     def __init__(
         self,
+        *,
         env: Optional[dict] = None,
         inspect: Optional[str] = 'COLLECT',
         log_config: Optional[str] = None,
         name: Optional[str] = None,
         quiet: Optional[bool] = False,
         quiet_error: Optional[bool] = False,
+        static_routing_table: Optional[bool] = False,
         uses: Optional[str] = None,
         workspace: Optional[str] = './',
         **kwargs,
@@ -258,6 +297,7 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
           When not given, then the default naming strategy will apply.
         :param quiet: If set, then no log will be emitted from this object.
         :param quiet_error: If set, then exception stack information will not be added to the log
+        :param static_routing_table: Defines if the routing table should be pre computed by the Flow. In this case it is statically defined for each Pod and not send on every data request. Can not be used in combination with external pods
         :param uses: The YAML file represents a flow
         :param workspace: The working directory for any IO operations in this object. If not set, then derive from its parent `workspace`.
 
@@ -296,7 +336,9 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
 
         _flow_parser = set_flow_parser()
         if args is None:
-            args = ArgNamespace.kwargs2namespace(kwargs, _flow_parser)
+            args = ArgNamespace.kwargs2namespace(
+                kwargs, _flow_parser, True, fallback_parsers=FALLBACK_PARSERS
+            )
         self.args = args
         # common args should be the ones that can not be parsed by _flow_parser
         known_keys = vars(args)
@@ -387,7 +429,11 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
         kwargs.update(self._common_kwargs)
         args = ArgNamespace.kwargs2namespace(kwargs, set_gateway_parser())
 
-        self._pod_nodes[GATEWAY_NAME] = Pod(args, needs)
+        args.k8s_namespace = self.args.name
+        args.connect_to_predecessor = False
+        self._pod_nodes[GATEWAY_NAME] = PodFactory.build_pod(
+            args, needs, self.args.infrastructure
+        )
 
     @allowed_levels([FlowBuildLevel.EMPTY])
     def needs(
@@ -431,6 +477,8 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
     @overload
     def add(
         self,
+        *,
+        connect_to_predecessor: Optional[bool] = False,
         ctrl_with_ipc: Optional[bool] = False,
         daemon: Optional[bool] = False,
         docker_kwargs: Optional[dict] = None,
@@ -438,29 +486,32 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
         env: Optional[dict] = None,
         expose_public: Optional[bool] = False,
         external: Optional[bool] = False,
+        force: Optional[bool] = False,
         gpus: Optional[str] = None,
         host: Optional[str] = '0.0.0.0',
         host_in: Optional[str] = '0.0.0.0',
         host_out: Optional[str] = '0.0.0.0',
         hosts_in_connect: Optional[List[str]] = None,
+        install_requirements: Optional[bool] = False,
         log_config: Optional[str] = None,
         memory_hwm: Optional[int] = -1,
         name: Optional[str] = None,
+        native: Optional[bool] = False,
         on_error_strategy: Optional[str] = 'IGNORE',
         parallel: Optional[int] = 1,
         peas_hosts: Optional[List[str]] = None,
         polling: Optional[str] = 'ANY',
         port_ctrl: Optional[int] = None,
-        port_expose: Optional[int] = None,
         port_in: Optional[int] = None,
+        port_jinad: Optional[int] = 8000,
         port_out: Optional[int] = None,
-        proxy: Optional[bool] = False,
         pull_latest: Optional[bool] = False,
         py_modules: Optional[List[str]] = None,
         quiet: Optional[bool] = False,
         quiet_error: Optional[bool] = False,
         quiet_remote_logs: Optional[bool] = False,
         replicas: Optional[int] = 1,
+        runs_in_docker: Optional[bool] = False,
         runtime_backend: Optional[str] = 'PROCESS',
         runtime_cls: Optional[str] = 'ZEDRuntime',
         scheduling: Optional[str] = 'LOAD_BALANCE',
@@ -469,6 +520,7 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
         ssh_keyfile: Optional[str] = None,
         ssh_password: Optional[str] = None,
         ssh_server: Optional[str] = None,
+        static_routing_table: Optional[bool] = False,
         timeout_ctrl: Optional[int] = 5000,
         timeout_ready: Optional[int] = 600000,
         upload_files: Optional[List[str]] = None,
@@ -476,6 +528,7 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
         uses_after: Optional[Union[str, Type['BaseExecutor'], dict]] = None,
         uses_before: Optional[Union[str, Type['BaseExecutor'], dict]] = None,
         uses_metas: Optional[dict] = None,
+        uses_requests: Optional[dict] = None,
         uses_with: Optional[dict] = None,
         volumes: Optional[List[str]] = None,
         workspace: Optional[str] = None,
@@ -484,6 +537,7 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
     ) -> Union['Flow', 'AsyncFlow']:
         """Add an Executor to the current Flow object.
 
+        :param connect_to_predecessor: The head Pea of this Pod will connect to the TailPea of the predecessor Pod.
         :param ctrl_with_ipc: If set, use ipc protocol for control socket
         :param daemon: The Pea attempts to terminate all of its Runtime child processes/threads on existing. setting it to true basically tell the Pea do not wait on the Runtime when closing
         :param docker_kwargs: Dictionary of kwargs arguments that will be passed to Docker SDK when starting the docker '
@@ -494,11 +548,12 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
         :param env: The map of environment variables that are available inside runtime
         :param expose_public: If set, expose the public IP address to remote when necessary, by default it exposesprivate IP address, which only allows accessing under the same network/subnet. Important to set this to true when the Pea will receive input connections from remote Peas
         :param external: The Pod will be considered an external Pod that has been started independently from the Flow.This Pod will not be context managed by the Flow.
-        :param gpus: Specify gpu to the inside the container.
+        :param force: If set, always pull the latest Hub Executor bundle even it exists on local
+        :param gpus: This argument allows dockerized Jina executor discover local gpu devices.
 
               Note,
               - To access all gpus, use `--gpus all`.
-              - To access multiple gpu access, use `--gpus 2`, start a gpu container on 2 gpus.
+              - To access multiple gpus, e.g. make use of 2 gpus, use `--gpus 2`.
               - To access specified gpus based on device id, use `--gpus device=[YOUR-GPU-DEVICE-ID]`
               - To access specified gpus based on multiple device id, use `--gpus device=[YOUR-GPU-DEVICE-ID1],device=[YOUR-GPU-DEVICE-ID2]`
               - To specify more parameters, use `--gpus device=[YOUR-GPU-DEVICE-ID],runtime=nvidia,capabilities=display
@@ -506,6 +561,7 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
         :param host_in: The host address for input, by default it is 0.0.0.0
         :param host_out: The host address for output, by default it is 0.0.0.0
         :param hosts_in_connect: The host address for input, by default it is 0.0.0.0
+        :param install_requirements: If set, install `requirements.txt` in the Hub Executor bundle to local
         :param log_config: The YAML config of the logger used in this object.
         :param memory_hwm: The memory high watermark of this pod in Gigabytes, pod will restart when this is reached. -1 means no restriction
         :param name: The name of this object.
@@ -517,6 +573,7 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
           - ...
 
           When not given, then the default naming strategy will apply.
+        :param native: If set, only native Executors is allowed, and the Executor is always run inside ZEDRuntime.
         :param on_error_strategy: The skip strategy on exceptions.
 
           - IGNORE: Ignore it, keep running all Executors in the sequel flow
@@ -533,21 +590,21 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
           - ANY: only one (whoever is idle) Pea polls the message
           - ALL: all Peas poll the message (like a broadcast)
         :param port_ctrl: The port for controlling the runtime, default a random port between [49152, 65535]
-        :param port_expose: The port of the host exposed to the public
         :param port_in: The port for input data, default a random port between [49152, 65535]
+        :param port_jinad: The port of the remote machine for usage with JinaD.
         :param port_out: The port for output data, default a random port between [49152, 65535]
-        :param proxy: If set, respect the http_proxy and https_proxy environment variables. otherwise, it will unset these proxy variables before start. gRPC seems to prefer no proxy
         :param pull_latest: Pull the latest image before running
         :param py_modules: The customized python modules need to be imported before loading the executor
 
-          Note, when importing multiple files and there is a dependency between them, then one has to write the dependencies in
-          reverse order. That is, if `__init__.py` depends on `A.py`, which again depends on `B.py`, then you need to write:
-
-          --py-modules __init__.py --py-modules B.py --py-modules A.py
+          Note that the recommended way is to only import a single module - a simple python file, if your
+          executor can be defined in a single file, or an ``__init__.py`` file if you have multiple files,
+          which should be structured as a python package. For more details, please see the
+          `Executor cookbook <https://docs.jina.ai/fundamentals/executor/repository-structure/>`__
         :param quiet: If set, then no log will be emitted from this object.
         :param quiet_error: If set, then exception stack information will not be added to the log
         :param quiet_remote_logs: Do not display the streaming of remote logs on local console
         :param replicas: The number of replicas in the pod, `port_in` and `port_out` will be set to random, and routers will be added automatically when necessary
+        :param runs_in_docker: Informs a Pea that runs in a container. Important to properly set networking information
         :param runtime_backend: The parallel backend of the runtime inside the Pea
         :param runtime_cls: The runtime class to run inside the Pea
         :param scheduling: The strategy of scheduling workload among Peas
@@ -556,6 +613,7 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
         :param ssh_keyfile: This specifies a key to be used in ssh login, default None. regular default ssh keys will be used without specifying this argument.
         :param ssh_password: The ssh password to the ssh server.
         :param ssh_server: The SSH server through which the tunnel will be created, can actually be a fully specified `user@server:port` ssh url.
+        :param static_routing_table: Defines if the routing table should be pre computed by the Flow. In this case it is statically defined for each Pod and not send on every data request. Can not be used in combination with external pods
         :param timeout_ctrl: The timeout in milliseconds of the control request, -1 for waiting forever
         :param timeout_ready: The timeout in milliseconds of a Pea waits for the runtime to be ready, -1 for waiting forever
         :param upload_files: The files on the host to be uploaded to the remote
@@ -580,6 +638,7 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
         :param uses_after: The executor attached after the Peas described by --uses, typically used for receiving from all parallels, accepted type follows `--uses`
         :param uses_before: The executor attached after the Peas described by --uses, typically before sending to all parallels, accepted type follows `--uses`
         :param uses_metas: Dictionary of keyword arguments that will override the `metas` configuration in `uses`
+        :param uses_requests: Dictionary of keyword arguments that will override the `requests` configuration in `uses`
         :param uses_with: Dictionary of keyword arguments that will override the `with` configuration in `uses`
         :param volumes: The path on the host to be mounted inside the container.
 
@@ -600,6 +659,7 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
     @allowed_levels([FlowBuildLevel.EMPTY])
     def add(
         self,
+        *,
         needs: Optional[Union[str, Tuple[str], List[str]]] = None,
         copy_flow: bool = True,
         pod_role: 'PodRoleType' = PodRoleType.POD,
@@ -617,7 +677,6 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
         :param kwargs: other keyword-value arguments that the Pod CLI supports
         :return: a (new) Flow object with modification
         """
-
         op_flow = copy.deepcopy(self) if copy_flow else self
 
         # pod naming logic
@@ -655,9 +714,9 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
             if (
                 kwargs.get('host', __default_host__) != __default_host__
                 and m
-                and 'port_expose' not in kwargs
+                and 'port_jinad' not in kwargs
             ):
-                kwargs['port_expose'] = m.group(2)
+                kwargs['port_jinad'] = m.group(2)
                 kwargs['host'] = m.group(1)
 
         # update kwargs of this Pod
@@ -667,12 +726,29 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
         if pod_role == PodRoleType.GATEWAY:
             parser = set_gateway_parser()
 
-        args = ArgNamespace.kwargs2namespace(kwargs, parser)
+        args = ArgNamespace.kwargs2namespace(
+            kwargs, parser, True, fallback_parsers=FALLBACK_PARSERS
+        )
+
+        # grpc data runtime does not support sharding at the moment
+        if (
+            args.grpc_data_requests
+            and kwargs.get('shards') is not None
+            and kwargs.get('shards', 1) > 1
+            and self.args.infrastructure != InfrastructureType.K8S
+        ):
+            raise NotImplementedError("GRPC data runtime does not support sharding")
+
+        if args.grpc_data_requests and args.runtime_cls == 'ZEDRuntime':
+            args.runtime_cls = 'GRPCDataRuntime'
 
         # pod workspace if not set then derive from flow workspace
         args.workspace = os.path.abspath(args.workspace or self.workspace)
 
-        op_flow._pod_nodes[pod_name] = PodFactory.build_pod(args, needs)
+        args.k8s_namespace = self.args.name
+        op_flow._pod_nodes[pod_name] = PodFactory.build_pod(
+            args, needs, self.args.infrastructure
+        )
 
         op_flow.last_pod = pod_name
 
@@ -782,36 +858,74 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
             },
         )
 
+    # TODO needs to be refactored - deployment should not be a dictionary. Related Ticket: https://github.com/jina-ai/jina/issues/3280
     def _get_routing_table(self) -> RoutingTable:
         graph = RoutingTable()
         for pod_id, pod in self._pod_nodes.items():
             if pod_id == GATEWAY_NAME:
-                graph.add_pod(f'start-{GATEWAY_NAME}', pod)
-                graph.add_pod(f'end-{GATEWAY_NAME}', pod)
+                deployment = pod.deployments[0]
+
+                graph.add_pod(
+                    f'start-{GATEWAY_NAME}',
+                    deployment['head_host'],
+                    deployment['head_port_in'],
+                    deployment['tail_port_out'],
+                    deployment['head_zmq_identity'],
+                )
+                graph.add_pod(
+                    f'end-{GATEWAY_NAME}',
+                    deployment['head_host'],
+                    deployment['head_port_in'],
+                    deployment['tail_port_out'],
+                    deployment['head_zmq_identity'],
+                )
             else:
-                graph.add_pod(pod_id, pod)
+                for deployment in pod.deployments:
+                    graph.add_pod(
+                        deployment['name'],
+                        deployment['head_host'],
+                        deployment['head_port_in'],
+                        deployment['tail_port_out'],
+                        deployment['head_zmq_identity'],
+                    )
 
         for end, pod in self._pod_nodes.items():
-
             if end == GATEWAY_NAME:
                 end = f'end-{GATEWAY_NAME}'
 
             if pod.head_args.hosts_in_connect is None:
                 pod.head_args.hosts_in_connect = []
 
+            if end not in graph.pods:
+                end = end + '_head'
+
             for start in pod.needs:
                 if start == GATEWAY_NAME:
                     start = f'start-{GATEWAY_NAME}'
 
+                if start not in graph.pods:
+                    start = start + '_tail'
+
                 start_pod = graph._get_target_pod(start)
-                if is_remote_local_connection(start_pod.host, pod.head_host):
+
+                if pod.connect_to_predecessor or is_remote_local_connection(
+                    start_pod.host, pod.head_host
+                ):
                     pod.head_args.hosts_in_connect.append(
-                        graph._get_target_pod(start).full_address
+                        graph._get_target_pod(start).full_out_address
                     )
 
                     graph.add_edge(start, end, True)
                 else:
                     graph.add_edge(start, end)
+
+        # In case of sharding, the head and the tail pea have to be connected to the shards
+        for end, pod in self._pod_nodes.items():
+            if len(pod.deployments) > 0:
+                deployments = pod.deployments
+                for deployment in deployments[1:-1]:
+                    graph.add_edge(deployments[0]['name'], deployment['name'])
+                    graph.add_edge(deployment['name'], deployments[-1]['name'])
 
         graph.active_pod = f'start-{GATEWAY_NAME}'
         return graph
@@ -822,7 +936,20 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
             raise RoutingTableCyclicError(
                 'The routing graph has a cycle. This would result in an infinite loop. Fix your Flow setup.'
             )
-        self._pod_nodes[GATEWAY_NAME].args.routing_table = routing_table.json()
+        for pod in self._pod_nodes:
+            routing_table_copy = RoutingTable()
+            routing_table_copy.proto.CopyFrom(routing_table.proto)
+            self._pod_nodes[
+                pod
+            ].args.static_routing_table = self.args.static_routing_table
+            # The gateway always needs the routing table to be set
+            if pod == GATEWAY_NAME:
+                self._pod_nodes[pod].args.routing_table = routing_table_copy.json()
+            # For other pods we only set it if we are told do so
+            elif self.args.static_routing_table:
+                routing_table_copy.active_pod = pod
+                self._pod_nodes[pod].args.routing_table = routing_table_copy.json()
+                self._pod_nodes[pod].update_pea_args()
 
     @allowed_levels([FlowBuildLevel.EMPTY])
     def build(self, copy_flow: bool = False) -> 'Flow':
@@ -882,9 +1009,6 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
 
         op_flow._set_initial_dynamic_routing_table()
 
-        for pod in op_flow._pod_nodes.values():
-            pod.args.host = self._resolve_host(pod.args.host)
-
         hanging_pods = _hanging_pods(op_flow)
         if hanging_pods:
             op_flow.logger.warning(
@@ -893,18 +1017,6 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
             )
         op_flow._build_level = FlowBuildLevel.GRAPH
         return op_flow
-
-    def _resolve_host(self, host: str) -> str:
-        try:
-            ip_address = socket.gethostbyname(host)
-            if ip_address == get_internal_ip():
-                return __default_host__
-            else:
-                return host
-        except socket.gaierror:
-            self.logger.warning(f'{host} can not be resolved into a valid IP address.')
-            # return the original one, as it might be some special docker host literal
-            return host
 
     def __call__(self, *args, **kwargs):
         """Builds the Flow
@@ -944,7 +1056,6 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
 
         :return: this instance
         """
-
         if self._build_level.value < FlowBuildLevel.GRAPH.value:
             self.build(copy_flow=False)
 
@@ -958,25 +1069,100 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
             if not getattr(v.args, 'external', False):
                 self.enter_context(v)
 
-        for k, v in self:
-            try:
-                if not getattr(v.args, 'external', False):
-                    v.wait_start_success()
-            except Exception as ex:
-                self.logger.error(
-                    f'{k}:{v!r} can not be started due to {ex!r}, Flow is aborted'
-                )
-                self.close()
-                raise
-
-        self.logger.debug(
-            f'{self.num_pods} Pods (i.e. {self.num_peas} Peas) are running in this Flow'
-        )
+        self._wait_until_all_ready()
 
         self._build_level = FlowBuildLevel.RUNNING
-        self._show_success_message()
 
         return self
+
+    def _wait_until_all_ready(self) -> bool:
+        results = {}
+        threads = []
+
+        def _wait_ready(_pod_name, _pod):
+            try:
+                if not getattr(_pod.args, 'external', False):
+                    results[_pod_name] = 'pending'
+                    _pod.wait_start_success()
+                    results[_pod_name] = 'done'
+            except Exception as ex:
+                results[_pod_name] = repr(ex)
+
+        def _polling_status():
+            spinner = itertools.cycle(
+                ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+            )
+
+            while True:
+                num_all = len(results)
+                num_done = 0
+                pendings = []
+                for _k, _v in results.items():
+                    sys.stdout.flush()
+                    if _v == 'pending':
+                        pendings.append(_k)
+                    else:
+                        num_done += 1
+                sys.stdout.write('\r{}\r'.format(' ' * 100))
+                pending_str = colored(' '.join(pendings)[:50], 'yellow')
+                sys.stdout.write(
+                    f'{colored(next(spinner), "green")} {num_done}/{num_all} waiting {pending_str} to be ready...'
+                )
+                sys.stdout.flush()
+
+                if not pendings:
+                    sys.stdout.write('\r{}\r'.format(' ' * 100))
+                    break
+                time.sleep(0.1)
+
+        # kick off all pods wait-ready threads
+        for k, v in self:
+            t = threading.Thread(
+                target=_wait_ready,
+                args=(
+                    k,
+                    v,
+                ),
+                daemon=True,
+            )
+            threads.append(t)
+            t.start()
+
+        # kick off spinner thread
+        t_m = threading.Thread(target=_polling_status, daemon=True)
+        t_m.start()
+
+        # kick off ip getter thread
+        addr_table = []
+        t_ip = threading.Thread(
+            target=self._get_address_table, args=(addr_table,), daemon=True
+        )
+        t_ip.start()
+
+        for t in threads:
+            t.join()
+        t_ip.join()
+        t_m.join()
+
+        error_pods = [k for k, v in results.items() if v != 'done']
+        if error_pods:
+            self.logger.error(
+                f'Flow is aborted due to {error_pods} can not be started.'
+            )
+            self.close()
+            raise RuntimeFailToStart
+        else:
+
+            if self.args.infrastructure == InfrastructureType.K8S:
+                success_msg = colored('🎉 Kubernetes Flow is ready to use!', 'green')
+            else:
+                success_msg = colored('🎉 Flow is ready to use!', 'green')
+
+            if addr_table:
+                self.logger.info(success_msg + '\n' + '\n'.join(addr_table))
+            self.logger.debug(
+                f'{self.num_pods} Pods (i.e. {self.num_peas} Peas) are running in this Flow'
+            )
 
     @property
     def num_pods(self) -> int:
@@ -1025,7 +1211,7 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
 
         kwargs = dict(
             host=self.host,
-            port_expose=self.port_expose,
+            port=self.port_expose,
             protocol=self.protocol,
         )
         kwargs.update(self._common_kwargs)
@@ -1080,7 +1266,7 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
                         )
 
                     for j in range(v.args.parallel):
-                        r = node
+                        r = v.args.uses
                         if v.args.replicas > 1:
                             r += f'_{i}_{j}'
                         elif v.args.parallel > 1:
@@ -1097,21 +1283,20 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
                 mermaid_graph.append('end')
 
         for node, v in self._pod_nodes.items():
-            ed_str = str(v.head_args.socket_in).split('_')[0]
             for need in sorted(v.needs):
-                if need in self._pod_nodes:
-                    st_str = str(self._pod_nodes[need].tail_args.socket_out).split('_')[
-                        0
-                    ]
 
-                _s = start_repl.get(need, (need, f'({need})'))
-                _e = end_repl.get(node, (node, f'({node})'))
+                _s = start_repl.get(
+                    need, (need, f'("{need}<br>({self._pod_nodes[need].args.uses})")')
+                )
+                _e = end_repl.get(node, (node, f'("{node}<br>({v.args.uses})")'))
                 _s_role = self._pod_nodes[need].role
                 _e_role = self._pod_nodes[node].role
                 line_st = '-->'
 
                 if _s_role in {PodRoleType.INSPECT, PodRoleType.JOIN_INSPECT}:
                     _s = start_repl.get(need, (need, f'{{{{{need}}}}}'))
+                elif _s_role == PodRoleType.GATEWAY:
+                    _s = start_repl.get(need, (need, f'("{need}")'))
 
                 if _e_role == PodRoleType.GATEWAY:
                     _e = ('gateway_END', f'({node})')
@@ -1186,8 +1371,8 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
             mermaid_str = mermaid_str.replace('graph LR', 'graph TD')
 
         image_type = 'svg'
-        if output and output.endswith('jpg'):
-            image_type = 'jpg'
+        if output and not output.endswith('svg'):
+            image_type = 'img'
 
         url = op_flow._mermaid_to_url(mermaid_str, image_type)
         showed = False
@@ -1222,9 +1407,6 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
         :param img_type: image type (svg/jpg)
         :return: the url points to a SVG
         """
-        if img_type == 'jpg':
-            img_type = 'img'
-
         encoded_str = base64.b64encode(bytes(mermaid_str, 'utf-8')).decode('utf-8')
 
         return f'https://mermaid.ink/{img_type}/{encoded_str}'
@@ -1235,7 +1417,7 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
         .. # noqa: DAR201
         """
         if GATEWAY_NAME in self._pod_nodes:
-            return self._pod_nodes[GATEWAY_NAME].port_expose
+            return self._pod_nodes[GATEWAY_NAME].args.port_expose
         else:
             return self._common_kwargs.get('port_expose', None)
 
@@ -1304,19 +1486,20 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
     def __iter__(self):
         return self._pod_nodes.items().__iter__()
 
-    def _show_success_message(self):
-
-        address_table = [
-            f'\t🔗 Protocol: \t\t{colored(self.protocol, attrs="bold")}',
-            f'\t🏠 Local access:\t'
-            + colored(f'{self.host}:{self.port_expose}', 'cyan', attrs='underline'),
-            f'\t🔒 Private network:\t'
-            + colored(
-                f'{self.address_private}:{self.port_expose}',
-                'cyan',
-                attrs='underline',
-            ),
-        ]
+    def _get_address_table(self, address_table):
+        address_table.extend(
+            [
+                f'\t🔗 Protocol: \t\t{colored(self.protocol, attrs="bold")}',
+                f'\t🏠 Local access:\t'
+                + colored(f'{self.host}:{self.port_expose}', 'cyan', attrs='underline'),
+                f'\t🔒 Private network:\t'
+                + colored(
+                    f'{self.address_private}:{self.port_expose}',
+                    'cyan',
+                    attrs='underline',
+                ),
+            ]
+        )
         if self.address_public:
             address_table.append(
                 f'\t🌐 Public address:\t'
@@ -1343,8 +1526,7 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
                     attrs='underline',
                 )
             )
-
-        self.logger.info('🎉 Flow is ready to use!\n' + '\n'.join(address_table))
+        return address_table
 
     def block(self):
         """Block the process until user hits KeyboardInterrupt"""
@@ -1549,9 +1731,11 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
 
         # noqa: DAR201
         """
-        return ArgNamespace.kwargs2namespace(
-            self._common_kwargs, set_client_cli_parser()
-        )
+        if 'port_expose' in self._common_kwargs:
+            kwargs = copy.deepcopy(self._common_kwargs)
+            kwargs['port'] = self._common_kwargs['port_expose']
+
+        return ArgNamespace.kwargs2namespace(kwargs, set_client_cli_parser())
 
     @property
     def gateway_args(self) -> argparse.Namespace:

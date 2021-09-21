@@ -2,7 +2,6 @@ import types
 
 import numpy as np
 import pytest
-
 from jina import Document, DocumentArray
 from jina.clients.request import request_generator
 from tests import random_docs
@@ -33,12 +32,6 @@ def test_traverse_type(doc_req):
     ds = doc_req.docs.traverse(['r'])
     assert isinstance(ds, types.GeneratorType)
     assert isinstance(list(ds)[0], DocumentArray)
-
-
-def test_traverse_empty_type(doc_req):
-    ds = doc_req.docs.traverse([])
-    assert isinstance(ds, types.GeneratorType)
-    assert len(list(ds)) == 0
 
 
 def test_traverse_root(doc_req):
@@ -202,3 +195,27 @@ def test_doc_iter_method():
 
     for d in DocumentArray(ds):
         assert d.text == 'modified'
+
+
+def test_traverse_matcharray():
+    doc = Document(
+        matches=[
+            Document(id=f'm{i}', chunks=[Document(id=f'm{i}c{j}') for j in range(3)])
+            for i in range(3)
+        ]
+    )
+    flat_docs = doc.matches.traverse_flat(['r', 'c'])
+    assert isinstance(flat_docs, DocumentArray)
+    assert len(flat_docs) == 12
+
+
+def test_traverse_chunkarray():
+    doc = Document(
+        chunks=[
+            Document(id=f'c{i}', matches=[Document(id=f'c{i}m{j}') for j in range(3)])
+            for i in range(3)
+        ]
+    )
+    flat_docs = doc.chunks.traverse_flat(['r', 'm'])
+    assert isinstance(flat_docs, DocumentArray)
+    assert len(flat_docs) == 12

@@ -1,8 +1,8 @@
-import requests
 from fastapi import Depends, APIRouter, HTTPException
 
-from ..dependencies import PodDepends
 from ... import Runtime400Exception
+from ..dependencies import PodDepends
+from ...models.enums import UpdateOperation
 from ...models import DaemonID, ContainerItem, ContainerStoreStatus, PodModel
 from ...stores import pod_store as store
 
@@ -35,7 +35,20 @@ async def _create(pod: PodDepends = Depends(PodDepends)):
             workspace_id=pod.workspace_id,
             params=pod.params,
             ports=pod.ports,
+            envs=pod.envs,
         )
+    except Exception as ex:
+        raise Runtime400Exception from ex
+
+
+@router.put(
+    path='/{id}',
+    summary='Trigger a rolling update on this Pod',
+    description='Types supported: "rolling_update"',
+)
+async def _update(id: DaemonID, kind: UpdateOperation, dump_path: str):
+    try:
+        return await store.update(id, kind, dump_path)
     except Exception as ex:
         raise Runtime400Exception from ex
 
@@ -66,17 +79,5 @@ async def _delete(id: DaemonID, workspace: bool = False):
 async def _status(id: DaemonID):
     try:
         return store[id]
-    except KeyError:
-        raise HTTPException(status_code=404, detail=f'{id} not found in {store!r}')
-
-
-@router.put(path='/{id}/rolling_update', summary='Trigger a rolling update on this Pod')
-async def _rolling_update(id: DaemonID, dump_path: str):
-    try:
-        # TODO: This logic should move to store
-        return requests.put(
-            f'{store[id].metadata.rest_api_uri}/pod/rolling_update',
-            params={'dump_path': dump_path},
-        )
     except KeyError:
         raise HTTPException(status_code=404, detail=f'{id} not found in {store!r}')

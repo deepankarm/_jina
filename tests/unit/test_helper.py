@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 from cli import _is_latest_version
-from jina import Executor, __default_endpoint__
+from jina import Executor, __default_endpoint__, Document
 from jina.clients.helper import _safe_callback, pprint_routes
 from jina.excepts import BadClientCallback, NotSupportedError, NoAvailablePortError
 from jina.executors.decorators import requests
@@ -18,12 +18,14 @@ from jina.helper import (
     find_request_binding,
     dunder_get,
     get_ci_vendor,
+    batch_iterator,
 )
 from jina.hubble.helper import get_hubble_url
 from jina.jaml.helper import complete_path
 from jina.logging.predefined import default_logger
 from jina.logging.profile import TimeContext
 from jina.proto import jina_pb2
+from jina.types.arrays.memmap import DocumentArrayMemmap
 from jina.types.ndarray.generic import NdArray
 from jina.types.request import Request
 from tests import random_docs
@@ -93,8 +95,8 @@ def test_wrap_func():
     from jina import Executor
 
     class DummyEncoder(Executor):
-        def __init__(self):
-            pass
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
 
     class MockEnc(DummyEncoder):
         pass
@@ -103,8 +105,8 @@ def test_wrap_func():
         pass
 
     class MockMockMockEnc(MockEnc):
-        def __init__(self):
-            pass
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
 
     def check_override(cls, method):
         is_inherit = any(
@@ -246,7 +248,7 @@ def test_yaml_filepath_validate_good(val):
         '''
     shards: $JINA_SHARDS_INDEXERS
     host: $JINA_REDIS_INDEXER_HOST
-    port_expose: 8000
+    port_jinad: 8000
     polling: all
     timeout_ready: 100000 # larger timeout as in query time will read all the data
     uses_after: merge_and_topk.yml
@@ -324,3 +326,18 @@ def test_ci_vendor():
 def test_get_hubble_url():
     for j in range(2):
         assert get_hubble_url().startswith('http')
+
+
+def test_batch_iterator_dam(tmpdir):
+    dam = DocumentArrayMemmap(tmpdir)
+    for i in range(4):
+        dam.append(Document(id=i))
+    bi = batch_iterator(dam, 2)
+    expected_iterator = iter(range(4))
+    for batch in bi:
+        for doc in batch:
+            assert int(doc.id) == next(expected_iterator)
+
+    # expect that expected_iterator is totally consumed
+    with pytest.raises(StopIteration):
+        next(expected_iterator)

@@ -1,5 +1,5 @@
+import itertools
 import json
-import warnings
 from abc import abstractmethod
 from collections.abc import MutableSequence, Iterable as Itr
 from contextlib import nullcontext
@@ -14,11 +14,19 @@ from typing import (
     Generator,
     BinaryIO,
     TypeVar,
+    Dict,
+    Sequence,
 )
 
+import numpy as np
+
+from .abstract import AbstractDocumentArray
+from .neural_ops import DocumentArrayNeuralOpsMixin
+from .search_ops import DocumentArraySearchOpsMixin
 from .traversable import TraversableSequence
 from ..document import Document
-from ...helper import typename, cached_property, cache_invalidate
+from ..struct import StructView
+from ...helper import typename
 from ...proto import jina_pb2
 
 try:
@@ -37,12 +45,10 @@ __all__ = ['DocumentArray', 'DocumentArrayGetAttrMixin']
 DocumentArraySourceType = TypeVar(
     'DocumentArraySourceType',
     jina_pb2.DocumentArrayProto,
-    List[Document],
-    List[jina_pb2.DocumentProto],
+    Sequence[Document],
+    Sequence[jina_pb2.DocumentProto],
+    Document,
 )
-
-if False:
-    from ..document import Document
 
 
 class DocumentArrayGetAttrMixin:
@@ -52,6 +58,19 @@ class DocumentArrayGetAttrMixin:
     def __iter__(self):
         ...
 
+    @abstractmethod
+    def __len__(self):
+        """Any implementation needs to implement the `length` method"""
+        ...
+
+    @abstractmethod
+    def __getitem__(self, item: int):
+        """Any implementation needs to implement access via integer item
+
+        :param item: the item index to access
+        """
+        ...
+
     def get_attributes(self, *fields: str) -> Union[List, List[List]]:
         """Return all nonempty values of the fields from all docs this array contains
 
@@ -59,7 +78,12 @@ class DocumentArrayGetAttrMixin:
         :return: Returns a list of the values for these fields.
             When `fields` has multiple values, then it returns a list of list.
         """
-        return self.get_attributes_with_docs(*fields)[0]
+        contents = [doc.get_attributes(*fields) for doc in self]
+
+        if len(fields) > 1:
+            contents = list(map(list, zip(*contents)))
+
+        return contents
 
     def get_attributes_with_docs(
         self,
@@ -74,33 +98,113 @@ class DocumentArrayGetAttrMixin:
 
         contents = []
         docs_pts = []
-        bad_docs = []
 
         for doc in self:
-            r = doc.get_attributes(*fields)
-            if r is None:
-                bad_docs.append(doc)
-                continue
-            contents.append(r)
+            contents.append(doc.get_attributes(*fields))
             docs_pts.append(doc)
 
         if len(fields) > 1:
             contents = list(map(list, zip(*contents)))
 
-        if bad_docs:
-            warnings.warn(
-                f'found {len(bad_docs)} docs at granularity {bad_docs[0].granularity} are missing one of the '
-                f'following fields: {fields} '
+        return contents, DocumentArray(docs_pts)
+
+    @property
+    @abstractmethod
+    def embeddings(self) -> np.ndarray:
+        """Return a `np.ndarray` stacking all the `embedding` attributes as rows."""
+        ...
+
+    @embeddings.setter
+    @abstractmethod
+    def embeddings(self, emb: np.ndarray):
+        """Set the embeddings of the Documents
+        :param emb: the embeddings to set
+        """
+        ...
+
+    @property
+    def blobs(self) -> np.ndarray:
+        """Return a `np.ndarray` stacking all the `blob` attributes.
+
+        The `blob` attributes are stacked together along a newly created first
+        dimension (as if you would stack using ``np.stack(X, axis=0)``).
+
+        .. warning:: This operation assumes all blobs have the same shape and dtype.
+                 All dtype and shape values are assumed to be equal to the values of the
+                 first element in the DocumentArray / DocumentArrayMemmap
+
+        .. warning:: This operation currently does not support sparse arrays.
+        """
+        ...
+
+    @blobs.setter
+    def blobs(self, blobs: np.ndarray):
+        """Set the blobs of the Documents
+
+        :param blobs: The blob array to set. The first axis is the "row" axis.
+        """
+
+        if len(blobs) != len(self):
+            raise ValueError(
+                f'the number of rows in the input ({len(blobs)}), should match the'
+                f'number of Documents ({len(self)})'
             )
 
-        if not docs_pts:
-            warnings.warn('no documents are extracted')
+        for d, x in zip(self, blobs):
+            d.blob = x
 
-        return contents, DocumentArray(docs_pts)
+    @property
+    def tags(self) -> List[StructView]:
+        """Get the tags attribute of all Documents"""
+        ...
+
+    @tags.setter
+    def tags(self, tags: Sequence[Union[Dict, StructView]]):
+        """Set the tags attribute for all Documents
+
+        :param tags: A sequence of tags to set, should be the same length as the
+            number of Documents
+        """
+
+        if len(tags) != len(self):
+            raise ValueError(
+                f'the number of tags in the input ({len(tags)}), should match the'
+                f'number of Documents ({len(self)})'
+            )
+
+        for doc, tags_doc in zip(self, tags):
+            doc.tags = tags_doc
+
+    @property
+    def texts(self) -> List[str]:
+        """Get the text attribute of all Documents"""
+        ...
+
+    @texts.setter
+    def texts(self, texts: Sequence[str]):
+        """Set the text attribute for all Documents
+
+        :param texts: A sequence of texts to set, should be the same length as the
+            number of Documents
+        """
+        if len(texts) != len(self):
+            raise ValueError(
+                f'the number of texts in the input ({len(texts)}), should match the'
+                f'number of Documents ({len(self)})'
+            )
+
+        for doc, text in zip(self, texts):
+            doc.text = text
 
 
 class DocumentArray(
-    TraversableSequence, MutableSequence, DocumentArrayGetAttrMixin, Itr
+    TraversableSequence,
+    MutableSequence,
+    DocumentArrayGetAttrMixin,
+    DocumentArrayNeuralOpsMixin,
+    DocumentArraySearchOpsMixin,
+    Itr,
+    AbstractDocumentArray,
 ):
     """
     :class:`DocumentArray` is a mutable sequence of :class:`Document`.
@@ -127,28 +231,40 @@ class DocumentArray(
             elif isinstance(docs, DocumentArray):
                 # This would happen in the client
                 self._pb_body = docs._pb_body
-            elif isinstance(docs, list):
-                # This would happen in the client
-                for doc in docs:
-                    if isinstance(doc, Document):
-                        self._pb_body.append(doc.proto)
-                    elif isinstance(doc, jina_pb2.DocumentProto):
-                        self._pb_body.append(doc)
-                    else:
-                        raise ValueError(f'Unexpected element in an input list')
             else:
+                if isinstance(docs, Document):
+                    # single Document
+                    docs = [docs]
+
                 from .memmap import DocumentArrayMemmap
 
-                if isinstance(docs, (Generator, DocumentArrayMemmap)):
-                    docs = list(docs)
+                if isinstance(
+                    docs, (list, tuple, Generator, DocumentArrayMemmap, itertools.chain)
+                ):
+                    # This would happen in the client
                     for doc in docs:
-                        self.append(doc)
+                        if isinstance(doc, Document):
+                            self._pb_body.append(doc.proto)
+                        elif isinstance(doc, jina_pb2.DocumentProto):
+                            self._pb_body.append(doc)
+                        else:
+                            raise ValueError(f'Unexpected element in an input list')
                 else:
                     raise ValueError(
                         f'DocumentArray got an unexpected input {type(docs)}'
                     )
+        self._update_id_to_index_map()
 
-    @cache_invalidate(attribute='_id_to_index')
+    def _update_id_to_index_map(self):
+        """Update the id_to_index map by enumerating all Documents in self._pb_body.
+
+        Very costy! Only use this function when self._pb_body is dramtically changed.
+        """
+
+        self._id_to_index = {
+            d.id: i for i, d in enumerate(self._pb_body)
+        }  # type: Dict[str, int]
+
     def insert(self, index: int, doc: 'Document') -> None:
         """
         Insert :param:`doc.proto` at :param:`index` into the list of `:class:`DocumentArray` .
@@ -157,22 +273,23 @@ class DocumentArray(
         :param doc: The doc needs to be inserted.
         """
         self._pb_body.insert(index, doc.proto)
+        self._id_to_index[doc.id] = index
 
-    @cache_invalidate(attribute='_id_to_index')
     def __setitem__(self, key, value: 'Document'):
         if isinstance(key, int):
             self[key].CopyFrom(value)
+            self._id_to_index[value.id] = key
         elif isinstance(key, str):
             self[self._id_to_index[key]].CopyFrom(value)
         else:
             raise IndexError(f'do not support this index {key}')
 
-    @cache_invalidate(attribute='_id_to_index')
     def __delitem__(self, index: Union[int, str, slice]):
         if isinstance(index, int):
             del self._pb_body[index]
         elif isinstance(index, str):
             del self[self._id_to_index[index]]
+            self._id_to_index.pop(index)
         elif isinstance(index, slice):
             del self._pb_body[index]
         else:
@@ -190,17 +307,13 @@ class DocumentArray(
         return len(self._pb_body)
 
     def __iter__(self) -> Iterator['Document']:
-        from ..document import Document
-
         for d in self._pb_body:
-            yield Document(d, hash_content=False)
+            yield Document(d)
 
     def __contains__(self, item: str):
         return item in self._id_to_index
 
     def __getitem__(self, item: Union[int, str, slice]):
-        from ..document import Document
-
         if isinstance(item, int):
             return Document(self._pb_body[item])
         elif isinstance(item, str):
@@ -223,13 +336,13 @@ class DocumentArray(
             self.append(doc)
         return self
 
-    @cache_invalidate(attribute='_id_to_index')
     def append(self, doc: 'Document'):
         """
         Append :param:`doc` in :class:`DocumentArray`.
 
         :param doc: The doc needs to be appended.
         """
+        self._id_to_index[doc.id] = len(self._pb_body)
         self._pb_body.append(doc.proto)
 
     def extend(self, iterable: Iterable['Document']) -> None:
@@ -238,14 +351,16 @@ class DocumentArray(
 
         :param iterable: the iterable of Documents to extend this array with
         """
+        if not iterable:
+            return
+
         for doc in iterable:
             self.append(doc)
 
-    @cache_invalidate(attribute='_id_to_index')
     def clear(self):
         """Clear the data of :class:`DocumentArray`"""
-        while len(self._pb_body) > 0:
-            self._pb_body.pop()
+        del self._pb_body[:]
+        self._id_to_index.clear()
 
     def reverse(self):
         """In-place reverse the sequence."""
@@ -257,13 +372,7 @@ class DocumentArray(
             self._pb_body[hi_idx].CopyFrom(self._pb_body[i])
             self._pb_body[i].CopyFrom(tmp)
             hi_idx -= 1
-
-    @cached_property
-    def _id_to_index(self):
-        """Returns a doc_id to index in list
-
-        .. # noqa: DAR201"""
-        return {d.id: i for i, d in enumerate(self._pb_body)}
+        self._update_id_to_index_map()
 
     def sort(self, key=None, *args, **kwargs):
         """
@@ -299,6 +408,8 @@ class DocumentArray(
         else:
             self._pb_body.sort(*args, **kwargs)
 
+        self._update_id_to_index_map()
+
     def __bool__(self):
         """To simulate ```l = []; if l: ...```
 
@@ -307,7 +418,6 @@ class DocumentArray(
         return len(self) > 0
 
     def __str__(self):
-        from ..document import Document
 
         content = f'{self.__class__.__name__} has {len(self._pb_body)} items'
 
@@ -378,7 +488,7 @@ class DocumentArray(
             dap = jina_pb2.DocumentArrayProto()
             if self._pb_body:
                 dap.docs.extend(self._pb_body)
-            fp.write(dap.SerializeToString())
+            fp.write(dap.SerializePartialToString())
 
     def save_json(self, file: Union[str, TextIO]) -> None:
         """Save array elements into a JSON file.
@@ -412,8 +522,6 @@ class DocumentArray(
             file_ctx = open(file)
 
         with file_ctx as fp:
-            from ..document import Document
-
             da = DocumentArray()
             for v in fp:
                 da.append(Document(v))
@@ -439,3 +547,82 @@ class DocumentArray(
             dap.ParseFromString(fp.read())
             da = DocumentArray(dap.docs)
             return da
+
+    # Properties for fast access of commonly used attributes
+    @property
+    def embeddings(self) -> np.ndarray:
+        """Return a `np.ndarray` stacking all the `embedding` attributes as rows.
+
+        .. warning:: This operation assumes all embeddings have the same shape and dtype.
+                 All dtype and shape values are assumed to be equal to the values of the
+                 first element in the DocumentArray / DocumentArrayMemmap
+
+        .. warning:: This operation currently does not support sparse arrays.
+
+        :return: embeddings stacked per row as `np.ndarray`.
+        """
+        x_mat = b''.join(d.embedding.dense.buffer for d in self._pb_body)
+        proto = self[0].proto.embedding.dense
+
+        return np.frombuffer(x_mat, dtype=proto.dtype).reshape(
+            (len(self), proto.shape[0])
+        )
+
+    @embeddings.setter
+    def embeddings(self, emb: np.ndarray):
+        """Set the embeddings of the Documents
+
+        :param emb: The embedding matrix to set
+        """
+
+        if len(emb) != len(self):
+            raise ValueError(
+                f'the number of rows in the input ({len(emb)}), should match the'
+                f'number of Documents ({len(self)})'
+            )
+
+        for d, x in zip(self, emb):
+            d.embedding = x
+
+    @DocumentArrayGetAttrMixin.tags.getter
+    def tags(self) -> List[StructView]:
+        """Get the tags attribute of all Documents
+
+        :return: List of ``tags`` attributes for all Documents
+        """
+        tags = [StructView(d.tags) for d in self._pb_body]
+        return tags
+
+    @DocumentArrayGetAttrMixin.texts.getter
+    def texts(self) -> List[str]:
+        """Get the text attribute of all Documents
+
+        :return: List of ``text`` attributes for all Documents
+        """
+        return [d.text for d in self._pb_body]
+
+    @DocumentArrayGetAttrMixin.blobs.getter
+    def blobs(self) -> np.ndarray:
+        """Return a `np.ndarray` stacking all the `blob` attributes.
+
+        The `blob` attributes are stacked together along a newly created first
+        dimension (as if you would stack using ``np.stack(X, axis=0)``).
+
+        .. warning:: This operation assumes all blobs have the same shape and dtype.
+                 All dtype and shape values are assumed to be equal to the values of the
+                 first element in the DocumentArray / DocumentArrayMemmap
+
+        .. warning:: This operation currently does not support sparse arrays.
+
+        :return: blobs stacked per row as `np.ndarray`.
+        """
+        x_mat = b''.join(d.blob.dense.buffer for d in self._pb_body)
+        proto = self[0].proto.blob.dense
+
+        return np.frombuffer(x_mat, dtype=proto.dtype).reshape(
+            (len(self), *proto.shape)
+        )
+
+    @staticmethod
+    def _flatten(sequence) -> 'DocumentArray':
+        return DocumentArray(list(itertools.chain.from_iterable(sequence)))

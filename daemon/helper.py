@@ -1,10 +1,11 @@
 import os
 import re
-from typing import Callable, TYPE_CHECKING, Tuple
+from contextlib import contextmanager
+from typing import Callable, List, TYPE_CHECKING, Tuple, Dict
 
 import aiohttp
 
-from .excepts import Runtime400Exception
+from .excepts import PartialDaemon400Exception
 
 if TYPE_CHECKING:
     from .models import DaemonID
@@ -62,19 +63,20 @@ def get_log_file_path(log_id: 'DaemonID') -> Tuple[str, 'DaemonID']:
     from .models.enums import IDLiterals
     from .stores import get_store_from_id
 
-    if IDLiterals.JWORKSPACE == log_id.jtype:
+    if log_id.jtype == IDLiterals.JWORKSPACE:
         workspace_id = log_id
-        filepath = get_workspace_path(log_id, 'logs', 'logging.log')
+        filepath = get_workspace_path(log_id, 'logging.log')
     else:
         workspace_id = get_store_from_id(log_id)[log_id].workspace_id
         filepath = get_workspace_path(workspace_id, 'logs', log_id, 'logging.log')
     return filepath, workspace_id
 
 
-def raise_if_not_alive(func: Callable):
+def if_alive(func: Callable, raise_type: Exception = None):
     """Decorator to be used in store for connection valiation
 
     :param func: function to be wrapped
+    :param raise_type: Exception class to be raied
     :return: wrapped function
     """
 
@@ -83,8 +85,61 @@ def raise_if_not_alive(func: Callable):
             return await func(self, *args, **kwargs)
         except aiohttp.ClientConnectionError as e:
             self._logger.error(f'connection to server failed: {e!r}')
-            raise Runtime400Exception(
-                f'connection to server failed during {func.__name__} for {self._kind.title()}'
-            )
+            if raise_type and isinstance(raise_type, Exception):
+                raise raise_type(
+                    f'connection to server failed during {func.__name__} for {self._kind.title()}'
+                )
 
     return wrapper
+
+
+def error_msg_from(response: Dict) -> str:
+    """Get error message from response
+
+    :param response: dict response
+    :return: prettified response string
+    """
+    assert 'detail' in response, '\'detail\' not found in response'
+    assert 'body' in response, '\'body\' not found in response'
+    if response['detail'] == PartialDaemon400Exception.__name__:
+        return response['body']
+    return (
+        '\n'.join(j for j in response['body'])
+        if isinstance(response['body'], List)
+        else response['body']
+    )
+
+
+@contextmanager
+def change_cwd(path):
+    """
+    Change the current working dir to ``path`` in a context and set it back to the original one when leaves the context.
+    Yields nothing
+    :param path: Target path.
+    :yields: nothing
+    """
+    curdir = os.getcwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(curdir)
+
+
+@contextmanager
+def change_env(key, val):
+    """
+    Change the environment of ``key`` to ``val`` in a context and set it back to the original one when leaves the context.
+    :param key: Old environment variable.
+    :param val: New environment variable.
+    :yields: nothing
+    """
+    old_var = os.environ.get(key, None)
+    os.environ[key] = val
+    try:
+        yield
+    finally:
+        if old_var:
+            os.environ[key] = old_var
+        else:
+            os.environ.pop(key)

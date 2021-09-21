@@ -1,3 +1,4 @@
+import sys
 import os
 import re
 import tempfile
@@ -143,6 +144,31 @@ class JAML:
             for v in set(JinaLoader.yaml_constructors.keys())
             if v and v.startswith('!')
         )
+
+    @staticmethod
+    def registered_classes() -> Dict:
+        """
+        Return a dict of tags and :class:`JAMLCompatible` classes that have been registered.
+
+        :return: tags and classes
+        """
+        return {
+            k[1:]: v
+            for k, v in JinaLoader.yaml_constructors.items()
+            if k and k.startswith('!')
+        }
+
+    @staticmethod
+    def cls_from_tag(tag: str) -> Optional['JAMLCompatible']:
+        """Fetch class from yaml tag
+
+        :param tag: yaml tag
+        :return: class object from tag
+        """
+        if not tag.startswith('!'):
+            tag = '!' + tag
+        bound = JinaLoader.yaml_constructors.get(tag, None)
+        return bound.__self__ if bound else None
 
     @staticmethod
     def load_no_tags(stream, **kwargs):
@@ -453,6 +479,7 @@ class JAMLCompatible(metaclass=JAMLCompatibleType):
         context: Optional[Dict[str, Any]] = None,
         override_with: Optional[Dict] = None,
         override_metas: Optional[Dict] = None,
+        override_requests: Optional[Dict] = None,
         **kwargs,
     ) -> 'JAMLCompatible':
         """A high-level interface for loading configuration with features
@@ -499,31 +526,42 @@ class JAMLCompatible(metaclass=JAMLCompatibleType):
         :param allow_py_modules: allow importing plugins specified by ``py_modules`` in YAML at any levels
         :param substitute: substitute environment, internal reference and context variables.
         :param context: context replacement variables in a dict, the value of the dict is the replacement.
-        :param override_with: dictionary of parameters to overwrite from the default config
-        :param override_metas: dictionary of parameters to overwrite from the default config
+        :param override_with: dictionary of parameters to overwrite from the default config's with field
+        :param override_metas: dictionary of parameters to overwrite from the default config's metas field
+        :param override_requests: dictionary of parameters to overwrite from the default config's requests field
         :param kwargs: kwargs for parse_config_source
         :return: :class:`JAMLCompatible` object
         """
+
         stream, s_path = parse_config_source(source, **kwargs)
         with stream as fp:
             # first load yml with no tag
             no_tag_yml = JAML.load_no_tags(fp)
             if no_tag_yml:
                 no_tag_yml.update(**kwargs)
+
+                # if there is `override_with` u should make sure that `uses_with` does not remain in the yaml
+                def _delitem(
+                    obj,
+                    key,
+                ):
+                    value = obj.get(key, None)
+                    if value:
+                        del obj[key]
+                        return
+                    for k, v in obj.items():
+                        if isinstance(v, dict):
+                            _delitem(v, key)
+
                 if override_with is not None:
-                    with_params = no_tag_yml.get('with', None)
-                    if with_params:
-                        with_params.update(**override_with)
-                        no_tag_yml.update(with_params)
-                    else:
-                        no_tag_yml['with'] = override_with
+                    _delitem(no_tag_yml, key='uses_with')
                 if override_metas is not None:
-                    metas_params = no_tag_yml.get('metas', None)
-                    if metas_params:
-                        metas_params.update(**override_metas)
-                        no_tag_yml.update(metas_params)
-                    else:
-                        no_tag_yml['metas'] = override_metas
+                    _delitem(no_tag_yml, key='uses_metas')
+                if override_requests is not None:
+                    _delitem(no_tag_yml, key='uses_requests')
+                cls._override_yml_params(no_tag_yml, 'with', override_with)
+                cls._override_yml_params(no_tag_yml, 'metas', override_metas)
+                cls._override_yml_params(no_tag_yml, 'requests', override_requests)
 
             else:
                 raise BadConfigSource(
@@ -533,11 +571,11 @@ class JAMLCompatible(metaclass=JAMLCompatibleType):
                 # expand variables
                 no_tag_yml = JAML.expand_dict(no_tag_yml, context)
             if allow_py_modules:
-                # also add YAML parent path to the search paths
                 load_py_modules(
                     no_tag_yml,
                     extra_search_paths=(os.path.dirname(s_path),) if s_path else None,
                 )
+
             from ..flow.base import Flow
 
             if issubclass(cls, Flow):
@@ -551,3 +589,13 @@ class JAMLCompatible(metaclass=JAMLCompatibleType):
                 tag_yml = JAML.unescape(JAML.dump(no_tag_yml))
             # load into object, no more substitute
             return JAML.load(tag_yml, substitute=False)
+
+    @classmethod
+    def _override_yml_params(cls, raw_yaml, field_name, override_field):
+        if override_field is not None:
+            field_params = raw_yaml.get(field_name, None)
+            if field_params:
+                field_params.update(**override_field)
+                raw_yaml.update(field_params)
+            else:
+                raw_yaml[field_name] = override_field

@@ -39,23 +39,23 @@ class WebSocketBaseClient(BaseClient):
             # setting `max_size` as None to avoid connection closure due to size of message
             # https://websockets.readthedocs.io/en/stable/api.html?highlight=1009#module-websockets.protocol
 
+            proto = 'wss' if self.args.https else 'ws'
             async with websockets.connect(
-                f'ws://{self.args.host}:{self.args.port_expose}/',
+                f'{proto}://{self.args.host}:{self.args.port}/',
                 max_size=None,
                 ping_interval=None,
+                ssl=self.args.https or None,
             ) as websocket:
                 # To enable websockets debug logs
                 # https://websockets.readthedocs.io/en/stable/cheatsheet.html#debugging
-                self.logger.debug(
-                    f'connected to {self.args.host}:{self.args.port_expose}'
-                )
+                self.logger.debug(f'connected to {self.args.host}:{self.args.port}')
                 self.num_requests = 0
                 self.num_responses = 0
 
                 async def _send_requests(request_iterator):
                     next_request = None
                     for next_request in request_iterator:
-                        await websocket.send(next_request.SerializeToString())
+                        await websocket.send(next_request.SerializePartialToString())
                         self.num_requests += 1
                     # Check if there was any request generated
                     if next_request is not None:

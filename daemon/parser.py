@@ -2,11 +2,10 @@ import argparse
 import os
 import sys
 
-from jina import __resources_path__
+from jina import __resources_path__, __default_host__
 from jina.parsers.base import set_base_parser
 from jina.parsers.helper import add_arg_group, _SHOW_ALL_ARGS
 from jina.parsers.peapods.base import mixin_base_ppr_parser
-from jina.parsers.peapods.runtimes.remote import mixin_remote_parser
 from .models.enums import PartialDaemonModes
 
 
@@ -42,6 +41,30 @@ def mixin_daemon_parser(parser):
     )
 
 
+def mixin_remote_jinad_parser(parser):
+    """Add the networking options for JinaD
+    :param parser: the parser
+    """
+    gp = add_arg_group(parser, title='RemoteJinad')
+    _add_host(gp)
+
+    gp.add_argument(
+        '--port',
+        type=int,
+        default=8000,
+        help='The port of the host exposed for connecting to.',
+    )
+
+
+def _add_host(arg_group):
+    arg_group.add_argument(
+        '--host',
+        type=str,
+        default=__default_host__,
+        help=f'The host address of JinaD, by default it is {__default_host__}.',
+    )
+
+
 def get_main_parser():
     """
     Return main parser
@@ -50,14 +73,14 @@ def get_main_parser():
 
     parser = set_base_parser()
 
-    mixin_remote_parser(parser)
+    mixin_remote_jinad_parser(parser)
     mixin_base_ppr_parser(parser)
     mixin_daemon_parser(parser)
 
     from jina import __resources_path__
 
     parser.set_defaults(
-        port_expose=8000,
+        port=8000,
         workspace='/tmp/jinad',
         log_config=os.getenv(
             'JINAD_LOG_CONFIG',
@@ -81,7 +104,8 @@ def _get_run_args(print_args: bool = True):
     from argparse import _StoreAction, _StoreTrueAction
 
     args, argv = parser.parse_known_args()
-    if print_args:
+    # avoid printing for partial daemon (args.mode is set)
+    if print_args and args.mode is None:
 
         default_args = {
             a.dest: a.default

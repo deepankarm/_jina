@@ -1,3 +1,5 @@
+import os
+import re
 import socket
 import platform
 from typing import Dict, List, Tuple, TYPE_CHECKING, Optional
@@ -8,8 +10,9 @@ from jina import __docker_host__
 from jina.helper import colored
 from jina.logging.logger import JinaLogger
 from . import (
-    __root_workspace__,
     jinad_args,
+    __root_workspace__,
+    __partial_workspace__,
 )
 from .excepts import (
     DockerNotFoundException,
@@ -26,6 +29,9 @@ if TYPE_CHECKING:
     from docker.models.networks import Network
     from docker.models.containers import Container
     from docker.client import APIClient, DockerClient
+
+
+PORT_REGEX = r'[0-9]+(?:\.[0-9]+){3}:[0-9]+'
 
 
 class Dockerizer:
@@ -162,8 +168,8 @@ class Dockerizer:
                 _log_stream(build_log, 'stream')
             elif 'message' in build_log:
                 _log_stream(build_log, 'message')
-            elif 'status' in build_log:
-                _log_stream(build_log, 'status')
+            # elif 'status' in build_log:
+            #     _log_stream(build_log, 'status')
 
         try:
             image = cls.client.images.get(name=workspace_id.tag)
@@ -188,8 +194,8 @@ class Dockerizer:
             workspace_id=workspace_id,
             container_id=workspace_id,
             command=None,
-            entrypoint=daemon_file.run,
             ports={f'{port}/tcp': port for port in daemon_file.ports},
+            entrypoint=daemon_file.run,
         )
 
     @classmethod
@@ -199,6 +205,7 @@ class Dockerizer:
         container_id: DaemonID,
         command: str,
         ports: Dict,
+        envs: Dict = {},
         entrypoint: Optional[str] = None,
     ) -> Tuple['Container', str, Dict]:
         """
@@ -210,6 +217,7 @@ class Dockerizer:
         :param container_id: name of the container
         :param command: command to be appended to default entrypoint
         :param ports: ports to be mapped with local
+        :param envs: dict of env vars to be set in the container
         :param entrypoint: custom entrypoint
         :raises DockerImageException: if image is not found locally
         :raises DockerContainerException: if container creation fails
@@ -234,7 +242,7 @@ class Dockerizer:
                 image=image,
                 name=container_id,
                 volumes=cls.volume(workspace_id),
-                environment=cls.environment(),
+                environment=cls.environment(envs),
                 network=network,
                 ports=ports,
                 detach=True,
@@ -246,14 +254,34 @@ class Dockerizer:
             cls.logger.critical(
                 f'Image {image} or Network {network} not found locally {e!r}'
             )
+
             raise DockerImageException(
                 'Docker image not built properly, cannot proceed for run'
             )
         except docker.errors.APIError as e:
-            cls.logger.critical(f'API Error while starting the docker container \n{e}')
-            raise DockerContainerException()
+            msg = f'API Error while starting the docker container{e}'
+            if 'port is already allocated' in str(e):
+                match = re.findall(PORT_REGEX, str(e))
+                if match and len(match) > 0:
+                    msg = f'port conflict: {match[0]}'
+            cls.logger.critical(msg)
+            raise DockerContainerException(msg)
         # TODO: network & ports return can be avoided?
         return container, network, ports
+
+    @classmethod
+    def logs(cls, id: str) -> str:
+        """Get all logs of a container
+
+        :param id: container id
+        :return: logs as str
+        """
+        try:
+            container: 'Container' = cls.client.containers.get(container_id=id)
+            return container.logs(stdout=True, stderr=True).decode()
+        except docker.errors.NotFound:
+            cls.logger.error(f'no containers with id {id} found')
+            return ""
 
     @classmethod
     def _get_volume_host_dir(cls):
@@ -283,28 +311,37 @@ class Dockerizer:
         """
         Local volumes to be mounted inside the container during `run`.
         .. note::
-            Local workspace should always be mounted to fefault WORKDIR for the container (/workspace).
+            Local workspace should always be mounted to default WORKDIR for the container (/workspace).
             docker sock on dockerhost should also be mounted to make sure DIND works
         :param workspace_id: workspace id
         :return: dict of volume mappings
         """
         return {
             f'{cls._get_volume_host_dir()}/{workspace_id}': {
-                'bind': '/workspace',
+                'bind': __partial_workspace__,
                 'mode': 'rw',
             },
             cls.dockersock: {'bind': '/var/run/docker.sock'},
         }
 
     @classmethod
-    def environment(cls) -> Dict[str, str]:
+    def environment(cls, envs: Dict[str, str]) -> Dict[str, str]:
         """
         Environment variables to be set inside the container during `run`
+
+        :param envs: dict of env vars to be set in the container
         :return: dict of env vars
         """
         return {
-            'JINA_LOG_WORKSPACE': '/workspace/logs',
+            'JINA_LOG_WORKSPACE': os.path.join(__partial_workspace__, 'logs'),
             'JINA_RANDOM_PORT_MIN': '49153',
+            'JINA_LOG_LEVEL': os.getenv('JINA_LOG_LEVEL') or 'INFO',
+            'JINA_HUB_ROOT': os.path.join(
+                __partial_workspace__, '.jina', 'hub-packages'
+            ),
+            'JINA_HUB_CACHE_DIR': os.path.join(__partial_workspace__, '.cache', 'jina'),
+            'HOME': __partial_workspace__,
+            **envs,
         }
 
     @classmethod

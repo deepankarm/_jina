@@ -1,16 +1,9 @@
 from jina.types.routing.table import RoutingTable
 
 
-class PodInterface:
-    def __init__(self, host, port):
-        self.head_host = host
-        self.head_port_in = port
-        self.head_zmq_identity = ''
-
-
 def test_single_routing():
     graph = RoutingTable()
-    graph.add_pod('pod0', PodInterface('0.0.0.0', 1230))
+    graph.add_pod('pod0', '0.0.0.0', 1230, 1233, '')
     graph.active_pod = 'pod0'
     next_routes = graph.get_next_targets()
 
@@ -19,8 +12,8 @@ def test_single_routing():
 
 def test_simple_routing():
     graph = RoutingTable()
-    graph.add_pod('pod0', PodInterface('0.0.0.0', 1230))
-    graph.add_pod('pod1', PodInterface('0.0.0.0', 1231))
+    graph.add_pod('pod0', '0.0.0.0', 1230, 1232, '')
+    graph.add_pod('pod1', '0.0.0.0', 1231, 1233, '')
     graph.add_edge('pod0', 'pod1')
     graph.active_pod = 'pod0'
     next_routes = graph.get_next_targets()
@@ -31,10 +24,10 @@ def test_simple_routing():
 
 def test_double_routing():
     graph = RoutingTable()
-    graph.add_pod('pod0', PodInterface('0.0.0.0', 1230))
-    graph.add_pod('pod1', PodInterface('0.0.0.0', 1231))
-    graph.add_pod('pod2', PodInterface('0.0.0.0', 1232))
-    graph.add_pod('pod3', PodInterface('0.0.0.0', 1233))
+    graph.add_pod('pod0', '0.0.0.0', 1230, 1234, '')
+    graph.add_pod('pod1', '0.0.0.0', 1231, 1235, '')
+    graph.add_pod('pod2', '0.0.0.0', 1232, 1236, '')
+    graph.add_pod('pod3', '0.0.0.0', 1233, 1237, '')
     graph.add_edge('pod0', 'pod1')
     graph.add_edge('pod0', 'pod2')
     graph.add_edge('pod1', 'pod3')
@@ -49,11 +42,11 @@ def test_double_routing():
 
 def test_nested_routing():
     graph = RoutingTable()
-    graph.add_pod('pod0', PodInterface('0.0.0.0', 1230))
-    graph.add_pod('pod1', PodInterface('0.0.0.0', 1231))
-    graph.add_pod('pod2', PodInterface('0.0.0.0', 1232))
-    graph.add_pod('pod3', PodInterface('0.0.0.0', 1233))
-    graph.add_pod('pod4', PodInterface('0.0.0.0', 1233))
+    graph.add_pod('pod0', '0.0.0.0', 1230, 1234, '')
+    graph.add_pod('pod1', '0.0.0.0', 1231, 1235, '')
+    graph.add_pod('pod2', '0.0.0.0', 1232, 1236, '')
+    graph.add_pod('pod3', '0.0.0.0', 1233, 1237, '')
+    graph.add_pod('pod4', '0.0.0.0', 1233, 1238, '')
     graph.add_edge('pod0', 'pod1')
     graph.add_edge('pod0', 'pod2')
     graph.add_edge('pod1', 'pod3')
@@ -92,11 +85,11 @@ def test_nested_routing():
 
 def test_topological_sorting():
     graph = RoutingTable()
-    graph.add_pod('pod0', PodInterface('0.0.0.0', 1230))
-    graph.add_pod('pod1', PodInterface('0.0.0.0', 1231))
-    graph.add_pod('pod2', PodInterface('0.0.0.0', 1232))
-    graph.add_pod('pod3', PodInterface('0.0.0.0', 1233))
-    graph.add_pod('pod4', PodInterface('0.0.0.0', 1233))
+    graph.add_pod('pod0', '0.0.0.0', 1230, 1234, '')
+    graph.add_pod('pod1', '0.0.0.0', 1231, 1235, '')
+    graph.add_pod('pod2', '0.0.0.0', 1232, 1236, '')
+    graph.add_pod('pod3', '0.0.0.0', 1233, 1237, '')
+    graph.add_pod('pod4', '0.0.0.0', 1233, 1238, '')
     graph.add_edge('pod0', 'pod1')
     graph.add_edge('pod0', 'pod2')
     graph.add_edge('pod1', 'pod3')
@@ -114,8 +107,8 @@ def test_topological_sorting():
 
 def test_cycle():
     graph = RoutingTable()
-    graph.add_pod('pod0', PodInterface('0.0.0.0', 1230))
-    graph.add_pod('pod1', PodInterface('0.0.0.0', 1231))
+    graph.add_pod('pod0', '0.0.0.0', 1230, 1232, '')
+    graph.add_pod('pod1', '0.0.0.0', 1231, 1233, '')
     graph.add_edge('pod0', 'pod1')
     graph.add_edge('pod1', 'pod0')
     graph.active_pod = 'pod0'
@@ -124,11 +117,11 @@ def test_cycle():
 
 def test_no_cycle():
     graph = RoutingTable()
-    graph.add_pod('pod0', PodInterface('0.0.0.0', 1230))
-    graph.add_pod('pod1', PodInterface('0.0.0.0', 1231))
-    graph.add_pod('pod2', PodInterface('0.0.0.0', 1232))
-    graph.add_pod('pod3', PodInterface('0.0.0.0', 1233))
-    graph.add_pod('pod4', PodInterface('0.0.0.0', 1233))
+    graph.add_pod('pod0', '0.0.0.0', 1230, 1234, '')
+    graph.add_pod('pod1', '0.0.0.0', 1231, 1235, '')
+    graph.add_pod('pod2', '0.0.0.0', 1232, 1236, '')
+    graph.add_pod('pod3', '0.0.0.0', 1233, 1237, '')
+    graph.add_pod('pod4', '0.0.0.0', 1233, 1238, '')
     graph.add_edge('pod2', 'pod1')
     graph.add_edge('pod1', 'pod0')
     graph.add_edge('pod0', 'pod3')

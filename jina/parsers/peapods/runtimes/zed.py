@@ -34,7 +34,6 @@ def mixin_zed_runtime_parser(parser):
     )
     gp.add_argument(
         '--uses-with',
-        '--override-with',
         action=KVAppendAction,
         metavar='KEY: VALUE',
         nargs='*',
@@ -44,13 +43,21 @@ def mixin_zed_runtime_parser(parser):
     )
     gp.add_argument(
         '--uses-metas',
-        '--override-metas',
         action=KVAppendAction,
         metavar='KEY: VALUE',
         nargs='*',
         help='''
     Dictionary of keyword arguments that will override the `metas` configuration in `uses`
     ''',
+    )
+    gp.add_argument(
+        '--uses-requests',
+        action=KVAppendAction,
+        metavar='KEY: VALUE',
+        nargs='*',
+        help='''
+        Dictionary of keyword arguments that will override the `requests` configuration in `uses`
+        ''',
     )
     gp.add_argument(
         '--py-modules',
@@ -60,11 +67,10 @@ def mixin_zed_runtime_parser(parser):
         help='''
 The customized python modules need to be imported before loading the executor
 
-Note, when importing multiple files and there is a dependency between them, then one has to write the dependencies in
-reverse order. That is, if `__init__.py` depends on `A.py`, which again depends on `B.py`, then you need to write:
-
---py-modules __init__.py --py-modules B.py --py-modules A.py
-
+Note that the recommended way is to only import a single module - a simple python file, if your
+executor can be defined in a single file, or an ``__init__.py`` file if you have multiple files,
+which should be structured as a python package. For more details, please see the
+`Executor cookbook <https://docs.jina.ai/fundamentals/executor/repository-structure/>`__
 ''',
     )
 
@@ -139,19 +145,17 @@ is wrong in the upstream, it is hard to carry this exception and moving forward 
     )
 
     gp.add_argument(
+        '--native',
+        action='store_true',
+        default=False,
+        help='If set, only native Executors is allowed, and the Executor is always run inside ZEDRuntime.',
+    )
+
+    gp.add_argument(
         '--num-part',
         type=int,
         default=0,
         help='the number of messages expected from upstream, 0 and 1 means single part'
-        if _SHOW_ALL_ARGS
-        else argparse.SUPPRESS,
-    )
-
-    parser.add_argument(
-        '--dynamic-routing',
-        action='store_true',
-        default=True,
-        help='The Pod will setup the socket types of the HeadPea and TailPea depending on this argument.'
         if _SHOW_ALL_ARGS
         else argparse.SUPPRESS,
     )
@@ -170,6 +174,31 @@ is wrong in the upstream, it is hard to carry this exception and moving forward 
         action='store_true',
         default=False,
         help='Tells if ZEDRuntime should handle incoming traffic as dynamic routing.'
+        if _SHOW_ALL_ARGS
+        else argparse.SUPPRESS,
+    )
+
+    gp.add_argument(
+        '--grpc-data-requests',
+        action='store_true',
+        default=False,
+        help='Tells if a Pea should use gRPC for data requests. Works only with dynamic routing out.'
+        if _SHOW_ALL_ARGS
+        else argparse.SUPPRESS,
+    )
+
+    gp.add_argument(
+        '--runs-in-docker',
+        action='store_true',
+        default=False,
+        help='Informs a Pea that runs in a container. Important to properly set networking information',
+    )
+
+    gp.add_argument(
+        '--dump-path',
+        type=str,
+        default='',
+        help='Dump path to be passed to the executor'
         if _SHOW_ALL_ARGS
         else argparse.SUPPRESS,
     )

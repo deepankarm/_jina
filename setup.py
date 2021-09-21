@@ -1,4 +1,5 @@
 import sys
+import os
 from os import path
 
 from setuptools import find_packages
@@ -117,6 +118,26 @@ def get_extra_requires(path, add_all=True):
 
 all_deps = get_extra_requires('extra-requirements.txt')
 
+core_deps = all_deps['core']
+perf_deps = all_deps['perf'].union(core_deps)
+standard_deps = all_deps['standard'].union(core_deps).union(perf_deps)
+
+if os.name == 'nt':
+    # uvloop & lz4 can not be run on windows
+    standard_deps.difference_update(perf_deps)
+    standard_deps.update(core_deps)
+
+# by default, final deps is the standard deps, unless specified by env otherwise
+final_deps = standard_deps
+
+# Use env var to enable a minimum installation of Jina
+# JINA_PIP_INSTALL_CORE=1 pip install jina
+# JINA_PIP_INSTALL_PERF=1 pip install jina
+if 'JINA_PIP_INSTALL_CORE' in os.environ:
+    final_deps = core_deps
+elif 'JINA_PIP_INSTALL_PERF' in os.environ:
+    final_deps = perf_deps
+
 setup(
     name=pkg_name,
     packages=find_packages(),
@@ -131,10 +152,8 @@ setup(
     long_description=_long_description,
     long_description_content_type='text/markdown',
     zip_safe=False,
-    setup_requires=[
-        'setuptools>=18.0',
-    ],
-    install_requires=list(all_deps['core']),
+    setup_requires=['setuptools>=18.0', 'wheel'],
+    install_requires=list(final_deps),
     extras_require=all_deps,
     entry_points={
         'console_scripts': [

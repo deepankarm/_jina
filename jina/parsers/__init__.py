@@ -19,17 +19,19 @@ def set_pea_parser(parser=None):
     from .peapods.runtimes.zmq import mixin_zmq_runtime_parser
     from .peapods.runtimes.zed import mixin_zed_runtime_parser
     from .peapods.runtimes.container import mixin_container_runtime_parser
-    from .peapods.runtimes.remote import mixin_remote_parser
+    from .peapods.runtimes.remote import mixin_remote_runtime_parser
     from .peapods.pea import mixin_pea_parser
     from .peapods.runtimes.distributed import mixin_distributed_feature_parser
+    from .hubble.pull import mixin_hub_pull_options_parser
 
     mixin_base_ppr_parser(parser)
     mixin_zmq_runtime_parser(parser)
     mixin_zed_runtime_parser(parser)
     mixin_container_runtime_parser(parser)
-    mixin_remote_parser(parser)
+    mixin_remote_runtime_parser(parser)
     mixin_distributed_feature_parser(parser)
     mixin_pea_parser(parser)
+    mixin_hub_pull_options_parser(parser)
 
     return parser
 
@@ -47,9 +49,10 @@ def set_pod_parser(parser=None):
 
     set_pea_parser(parser)
 
-    from .peapods.pod import mixin_base_pod_parser
+    from .peapods.pod import mixin_base_pod_parser, mixin_k8s_pod_parser
 
     mixin_base_pod_parser(parser)
+    mixin_k8s_pod_parser(parser)
 
     return parser
 
@@ -69,11 +72,12 @@ def set_gateway_parser(parser=None):
     from .peapods.runtimes.zmq import mixin_zmq_runtime_parser
     from .peapods.runtimes.zed import mixin_zed_runtime_parser
     from .peapods.runtimes.remote import (
-        mixin_remote_parser,
+        mixin_gateway_parser,
         mixin_prefetch_parser,
         mixin_http_gateway_parser,
         mixin_compressor_parser,
     )
+    from .peapods.pod import mixin_base_pod_parser, mixin_k8s_pod_parser
     from .peapods.pea import mixin_pea_parser
 
     mixin_base_ppr_parser(parser)
@@ -83,8 +87,9 @@ def set_gateway_parser(parser=None):
     mixin_http_gateway_parser(parser)
     mixin_compressor_parser(parser)
     mixin_comm_protocol_parser(parser)
-    mixin_remote_parser(parser)
+    mixin_gateway_parser(parser)
     mixin_pea_parser(parser)
+    mixin_k8s_pod_parser(parser)
 
     from ..enums import SocketType, PodRoleType
 
@@ -98,9 +103,12 @@ def set_gateway_parser(parser=None):
     )
 
     parser.add_argument(
-        '--routing-table',
-        type=str,
-        help='Routing graph for the gateway' if _SHOW_ALL_ARGS else argparse.SUPPRESS,
+        '--dynamic-routing',
+        action='store_true',
+        default=True,
+        help='The Pod will setup the socket types of the HeadPea and TailPea depending on this argument.'
+        if _SHOW_ALL_ARGS
+        else argparse.SUPPRESS,
     )
 
     return parser
@@ -117,13 +125,33 @@ def set_client_cli_parser(parser=None):
 
         parser = set_base_parser()
 
-    from .peapods.runtimes.remote import mixin_remote_parser
+    from .peapods.runtimes.remote import mixin_client_gateway_parser
     from .client import mixin_client_features_parser, mixin_comm_protocol_parser
 
-    mixin_remote_parser(parser)
+    mixin_client_gateway_parser(parser)
     mixin_client_features_parser(parser)
     mixin_comm_protocol_parser(parser)
 
+    return parser
+
+
+def set_help_parser(parser=None):
+    """Set the parser for the jina help lookup
+
+    :param parser: an optional existing parser to build upon
+    :return: the parser
+    """
+
+    if not parser:
+        from .base import set_base_parser
+
+        parser = set_base_parser()
+
+    parser.add_argument(
+        'query',
+        type=str,
+        help='Lookup the usage & mention of the argument name in Jina API. The name can be fuzzy',
+    )
     return parser
 
 
@@ -166,10 +194,9 @@ def get_main_parser():
         )
     )
 
-    set_pod_parser(
+    set_pea_parser(
         sp.add_parser(
             'executor',
-            aliases=['pod'],
             help='Start an Executor',
             description='Start an Executor. Executor is how Jina processes Document.',
             formatter_class=_chf,
@@ -212,6 +239,14 @@ def get_main_parser():
         )
     )
 
+    set_help_parser(
+        sp.add_parser(
+            'help',
+            help='Show help text of a CLI argument',
+            description='Show help text of a CLI argument',
+            formatter_class=_chf,
+        )
+    )
     # Below are low-level / internal / experimental CLIs, hidden from users by default
 
     set_pea_parser(
@@ -222,6 +257,17 @@ def get_main_parser():
             'are doing low-level orchestration',
             formatter_class=_chf,
             **(dict(help='Start a Pea')) if _SHOW_ALL_ARGS else {},
+        )
+    )
+
+    set_pod_parser(
+        sp.add_parser(
+            'pod',
+            description='Start a Pod. '
+            'You should rarely use this directly unless you '
+            'are doing low-level orchestration',
+            formatter_class=_chf,
+            **(dict(help='Start a Pod')) if _SHOW_ALL_ARGS else {},
         )
     )
 

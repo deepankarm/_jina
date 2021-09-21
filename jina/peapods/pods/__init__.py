@@ -147,6 +147,13 @@ class BasePod:
         return self.args.name
 
     @property
+    def connect_to_predecessor(self) -> str:
+        """True, if the Pod should open a connect socket in the HeadPea to the predecessor Pod.
+        .. # noqa: DAR201
+        """
+        return self.args.connect_to_predecessor
+
+    @property
     def head_host(self) -> str:
         """Get the host of the HeadPea of this pod
         .. # noqa: DAR201
@@ -159,6 +166,13 @@ class BasePod:
         .. # noqa: DAR201
         """
         return self.head_args.port_in
+
+    @property
+    def tail_port_out(self):
+        """Get the port_out of the TailPea of this pod
+        .. # noqa: DAR201
+        """
+        return self.tail_args.port_out
 
     @property
     def head_zmq_identity(self):
@@ -279,6 +293,22 @@ class BasePod:
         """
         ...
 
+    @property
+    def deployments(self) -> List[Dict]:
+        """Get deployments of the pod. The BasePod just gives one deployment.
+
+        :return: list of deployments
+        """
+        return [
+            {
+                'name': self.name,
+                'head_host': self.head_host,
+                'head_port_in': self.head_port_in,
+                'tail_port_out': self.tail_port_out,
+                'head_zmq_identity': self.head_zmq_identity,
+            }
+        ]
+
 
 class Pod(BasePod, ExitFIFO):
     """A BasePod is an immutable set of peas, which run in parallel. They share the same input and output socket.
@@ -304,16 +334,20 @@ class Pod(BasePod, ExitFIFO):
         self.deducted_head = None
         self.deducted_tail = None
         self.peas = []  # type: List['BasePea']
-        if isinstance(args, Dict):
-            # This is used when a Pod is created in a remote context, where peas & their connections are already given.
-            self.peas_args = args
-        else:
-            self.peas_args = self._parse_args(args)
+        self.update_pea_args()
         self._activated = False
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         super().__exit__(exc_type, exc_val, exc_tb)
         self.join()
+
+    def update_pea_args(self):
+        """ Update args of its peas based on Pod args"""
+        if isinstance(self.args, Dict):
+            # This is used when a Pod is created in a remote context, where peas & their connections are already given.
+            self.peas_args = self.args
+        else:
+            self.peas_args = self._parse_args(self.args)
 
     @property
     def is_singleton(self) -> bool:
@@ -333,15 +367,6 @@ class Pod(BasePod, ExitFIFO):
         """
         # note this will be never out of boundary
         return self.peas_args['peas'][0]
-
-    @property
-    def port_expose(self) -> int:
-        """Get the grpc port number
-
-
-        .. # noqa: DAR201
-        """
-        return self.first_pea_args.port_expose
 
     @property
     def host(self) -> str:
