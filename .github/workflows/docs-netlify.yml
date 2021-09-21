@@ -21,6 +21,7 @@ jobs:
       - uses: jsmrcaga/action-netlify-deploy@v1.1.0
         with:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
           build_directory: docs/_build/dirhtml
           install_command: pip install -r docs/requirements.txt
           build_command: bash ./docs/makedocs.sh
