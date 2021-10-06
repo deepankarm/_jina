@@ -25,7 +25,7 @@ jobs:
         uses: tj-actions/changed-files@v10
         with:
           files: |
-            docs/**/*.md
+            docs/**
       
       - name: Run step if any of the listed files above change
         if: steps.changed-files-specific.outputs.any_changed == 'true'

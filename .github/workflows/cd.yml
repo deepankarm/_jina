@@ -12,6 +12,24 @@ on:
 
 
 jobs:
+  files-changed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - name: Get specific changed files
+        id: changed-files-specific
+        uses: tj-actions/changed-files@v10
+        with:
+          files: |
+            docs/**
+      
+      - name: Run step if any of the listed files above change
+        if: steps.changed-files-specific.outputs.any_changed == 'true'
+        run: |
+          echo "One or more files listed above has changed."
+
   update-schema:
     if: |
       !startsWith(github.event.head_commit.message, 'chore') &&
