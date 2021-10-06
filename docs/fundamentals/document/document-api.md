@@ -17,7 +17,7 @@ A `Document` object has the following attributes, which can be put into the foll
 ```python
 from jina import Document
 
-d = Document(content='hello, world!') 
+d = Document(content='hello,    world!') 
 ```
 
 
