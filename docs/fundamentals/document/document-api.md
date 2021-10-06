@@ -5,37 +5,35 @@ all `Document`s in Jina.
 
 A `Document` object has the following attributes, which can be put into the following categories:
 
-| Category | Attributes |
-|---|---|
-| Content attributes | `.buffer`, `.blob`, `.text`, `.content`, `.uri`, `.embedding`, `.tags` |
-| Recursive attributes | `.chunks`, `.matches`|
-| Meta attributes | `.id`, `.parent_id`, `.weight`, `.mime_type`, `.content_type`, `.modality`,`.granularity`, `.adjacency`  |
-| Relevance attributes | `.scores`, `.evaluations` |
+| Category             | Attributes                                                                                              |
+| -------------------- | ------------------------------------------------------------------------------------------------------- |
+| Content attributes   | `.buffer`, `.blob`, `.text`, `.content`, `.uri`, `.embedding`, `.tags`                                  |
+| Recursive attributes | `.chunks`, `.matches`                                                                                   |
+| Meta attributes      | `.id`, `.parent_id`, `.weight`, `.mime_type`, `.content_type`, `.modality`,`.granularity`, `.adjacency` |
+| Relevance attributes | `.scores`, `.evaluations`                                                                               |
 
 ## Minimum working example
 
 ```python
 from jina import Document
 
-d = Document(content='hello,    world!') 
+d = Document(content='hello,    world!')
 ```
 
-
 ## Document content
-
 
 ```{image} ../../../.github/2.0/doc.content.svg
 :align: center
 ```
 
-| Attribute | Description |
-| --- | --- |
-| `doc.buffer` | The raw binary content of this Document |
-| `doc.blob` | The `ndarray` of the image/audio/video Document |
-| `doc.text` | The text info of the Document |
-| `doc.content` | A sugar syntax to access one of the above non-empty field |
-| `doc.uri` | A uri of the Document could be: a local file path, a remote url starts with http or https or data URI scheme |
-| `doc.tags` | A structured data value, consisting of fields which map to dynamically typed values |
+| Attribute     | Description                                                                                                  |
+| ------------- | ------------------------------------------------------------------------------------------------------------ |
+| `doc.buffer`  | The raw binary content of this Document                                                                      |
+| `doc.blob`    | The `ndarray` of the image/audio/video Document                                                              |
+| `doc.text`    | The text info of the Document                                                                                |
+| `doc.content` | A sugar syntax to access one of the above non-empty field                                                    |
+| `doc.uri`     | A uri of the Document could be: a local file path, a remote url starts with http or https or data URI scheme |
+| `doc.tags`    | A structured data value, consisting of fields which map to dynamically typed values                          |
 
 You can assign `str`, `ndarray`, or `buffer` to a `Document`.
 
@@ -66,7 +64,6 @@ Note that one `Document` can only contain one type of `content`: it is either `t
 You can get a visualization of a `Document` object in Jupyter Notebook or by calling `.plot()`.
 
 <img src="https://mermaid.ink/svg/JSV7aW5pdDogeyd0aGVtZSc6ICdiYXNlJywgJ3RoZW1lVmFyaWFibGVzJzogeyAncHJpbWFyeUNvbG9yJzogJyNGRkM2NjYnfX19JSUKICAgICAgICAgICAgICAgICAgICBjbGFzc0RpYWdyYW0KICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgY2xhc3MgZDY5fkRvY3VtZW50fnsKK2lkIGU4MDY0MjdlLWEKK21pbWVfdHlwZSB0ZXh0L3BsYWluCit0ZXh0IGhlbGxvCn0="/><img src="https://mermaid.ink/svg/JSV7aW5pdDogeyd0aGVtZSc6ICdiYXNlJywgJ3RoZW1lVmFyaWFibGVzJzogeyAncHJpbWFyeUNvbG9yJzogJyNGRkM2NjYnfX19JSUKICAgICAgICAgICAgICAgICAgICBjbGFzc0RpYWdyYW0KICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgY2xhc3MgZDczfkRvY3VtZW50fnsKK2lkIGZmZTQzMmFjLWEKK2J1ZmZlciBEREU9CittaW1lX3R5cGUgdGV4dC9wbGFpbgp9"/><img src="https://mermaid.ink/svg/JSV7aW5pdDogeyd0aGVtZSc6ICdiYXNlJywgJ3RoZW1lVmFyaWFibGVzJzogeyAncHJpbWFyeUNvbG9yJzogJyNGRkM2NjYnfX19JSUKICAgICAgICAgICAgICAgICAgICBjbGFzc0RpYWdyYW0KICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgY2xhc3MgZDJmfkRvY3VtZW50fnsKK2lkIDAzOWVmMzE0LWEKK2Jsb2IoPGNsYXNzICdudW1weS5uZGFycmF5Jz4pCn0="/>
-
 
 ### Conversion from URI to content
 
@@ -116,7 +113,7 @@ d2 = Document(embedding=np.array([[1, 2, 3], [4, 5, 6]]))
 
 ### Sparse embedding
 
-Scipy sparse array (`coo_matrix, bsr_matrix, csr_matrix, csc_matrix`)  are supported as both `embedding` or `blob` :
+Scipy sparse array (`coo_matrix, bsr_matrix, csr_matrix, csc_matrix`) are supported as both `embedding` or `blob` :
 
 ```python
 import scipy.sparse as sp
@@ -150,7 +147,7 @@ d4 = Document(blob=tf.SparseTensor(indices, values, dense_shape))
 
 ## Document tags
 
-`Document` contains the `tags` field that can hold a map-like structure that can map arbitrary values. 
+`Document` contains the `tags` field that can hold a map-like structure that can map arbitrary values.
 In practice, one can store meta information in `tags`.
 
 ```python
@@ -194,12 +191,11 @@ da.get_attributes('tags__dimensions__height', 'tags__dimensions__weight')
 [[5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0], [10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0]]
 ```
 
-
 `````{admonition} Note
 :class: caution
 
 As `tags` does not have a fixed schema, it is declared with type `google.protobuf.Struct` in the `DocumentProto`
-protobuf declaration. However, `google.protobuf.Struct` follows the JSON specification and does not 
+protobuf declaration. However, `google.protobuf.Struct` follows the JSON specification and does not
 differentiate `int` from `float`. So, data of type `int` in `tags` will be **always** casted to `float` when request is
 sent to executor.
 
@@ -254,7 +250,6 @@ with Flow().add(uses=MyExecutor) as f:
 To better see the Document's recursive structure, you can use `.plot()` function. If you are using JupyterLab/Notebook,
 all `Document` objects will be auto-rendered:
 
-
 ```{code-block} python
 ---
 emphasize-lines: 13
@@ -274,7 +269,6 @@ d0.matches.append(d3)
 d0.plot()  # simply `d0` on JupyterLab
 ```
 
-
 ```{figure} ../../../.github/images/four-symbol-docs.svg
 :align: center
 ```
@@ -282,6 +276,7 @@ d0.plot()  # simply `d0` on JupyterLab
 ## Serialize Document
 
 You can serialize a `Document` into JSON string or Python dict or binary string:
+
 ````{tab} JSON
 ```python
 from jina import Document
@@ -359,7 +354,7 @@ as `lists` of values.
 
 ## Set/unset attributes
 
-Set an attribute as how you would set an attribute to any Python object: 
+Set an attribute as how you would set an attribute to any Python object:
 
 ```python
 from jina import Document
@@ -396,14 +391,14 @@ d.pop('text', 'id', 'mime_type')
 
 ### Construct Document with multiple attributes
 
-| Attribute | Description |
-| --- | --- |
-| `doc.id` | A hexdigest that represents a unique Document ID |
-| `doc.parent_id` | A hexdigest that represents the document's parent id |
-| `doc.weight` | The weight of the Document |
-| `doc.mime_type` | The mime type of the Document |
-| `doc.content_type` | The content type of the Document |
-| `doc.modality` | An identifier of the modality the Document belongs to|
+| Attribute          | Description                                           |
+| ------------------ | ----------------------------------------------------- |
+| `doc.id`           | A hexdigest that represents a unique Document ID      |
+| `doc.parent_id`    | A hexdigest that represents the document's parent id  |
+| `doc.weight`       | The weight of the Document                            |
+| `doc.mime_type`    | The mime type of the Document                         |
+| `doc.content_type` | The content type of the Document                      |
+| `doc.modality`     | An identifier of the modality the Document belongs to |
 
 You can assign multiple attributes in the constructor via:
 
@@ -517,13 +512,13 @@ The `jina.types.document.generators` module let you construct `Document` from co
 CSV, `ndarray` and text files. The following functions will give a generator of `Document`, where each `Document` object
 corresponds to a line/row in the original format:
 
-|     |     |
-| --- | --- |
-| `from_ndjson()` | Yield `Document` from a line-based JSON file. Each line is a `Document` object |
-| `from_csv()` | Yield `Document` from a CSV file. Each line is a `Document` object |
-| `from_files()` | Yield `Document` from a glob files. Each file is a `Document` object |
+|                  |                                                                                          |
+| ---------------- | ---------------------------------------------------------------------------------------- |
+| `from_ndjson()`  | Yield `Document` from a line-based JSON file. Each line is a `Document` object           |
+| `from_csv()`     | Yield `Document` from a CSV file. Each line is a `Document` object                       |
+| `from_files()`   | Yield `Document` from a glob files. Each file is a `Document` object                     |
 | `from_ndarray()` | Yield `Document` from a `ndarray`. Each row (depending on `axis`) is a `Document` object |
-| `from_lines()` | Yield `Document` from lines, json and csv |
+| `from_lines()`   | Yield `Document` from lines, json and csv                                                |
 
 Using a generator is sometimes less memory-demanding, as it does not load/build all Document objects in one shot.
 
@@ -543,12 +538,12 @@ and "matches". Chunks and matches are `Document` object as well.
 
 <img src="https://hanxiao.io/2020/08/28/What-s-New-in-Jina-v0-5/blog-post-v050-protobuf-documents.jpg">
 
-|  Attribute   |   Description  |
-| --- | --- |
-| `doc.chunks` | The list of sub-Documents of this Document. They have `granularity + 1` but same `adjacency` |
-| `doc.matches` | The list of matched Documents of this Document. They have `adjacency + 1` but same `granularity` |
-|  `doc.granularity` | The recursion "depth" of the recursive chunks structure |
-|  `doc.adjacency` | The recursion "width" of the recursive match structure |
+| Attribute         | Description                                                                                      |
+| ----------------- | ------------------------------------------------------------------------------------------------ |
+| `doc.chunks`      | The list of sub-Documents of this Document. They have `granularity + 1` but same `adjacency`     |
+| `doc.matches`     | The list of matched Documents of this Document. They have `adjacency + 1` but same `granularity` |
+| `doc.granularity` | The recursion "depth" of the recursive chunks structure                                          |
+| `doc.adjacency`   | The recursion "width" of the recursive match structure                                           |
 
 You can add **chunks** (sub-Document) and **matches** (neighbour-Document) to a `Document`:
 
@@ -574,11 +569,11 @@ You can add **chunks** (sub-Document) and **matches** (neighbour-Document) to a 
   d.matches.append(Document())
   ```
 
-````{admonition} Note
+```{admonition} Note
 :class: note
 Both `doc.chunks` and `doc.matches` return `ChunkArray` and `MatchArray`, which are sub-classes
 of {ref}`DocumentArray<documentarray>`. We will introduce `DocumentArray` later.
-````
+```
 
 ### Caveat: order matters
 
@@ -616,9 +611,9 @@ root_document = Document(
 
 ### Relevance attributes
 
-|  Attributes   |  Description   |
-| --- | --- |
-| `doc.scores` | The relevance information of this Document. A dict-like structure supporting storing different metrics |
+| Attributes        | Description                                                                                             |
+| ----------------- | ------------------------------------------------------------------------------------------------------- |
+| `doc.scores`      | The relevance information of this Document. A dict-like structure supporting storing different metrics  |
 | `doc.evaluations` | The evaluation information of this Document. A dict-like structure supporting storing different metrics |
 
 You can add a relevance score to a `Document` object via:
@@ -636,9 +631,9 @@ d.evaluations['recall'].op_name = 'recall()'
 d
 ```
 
-```text
+````text
 <jina.types.document.Document id=6c4db2c8-cdf1-11eb-be5d-e86a64801cb1 scores={'values': {'cosine similarity': {'value': 0.96, 'op_name': 'cosine()', 'description': 'cosine similarity'}}} evaluations={'recall': {'value': 0.56, 'op_name': 'recall()', 'description': 'recall at 10'}} at 140003211429776>```
-```
+````
 
 Score information is often used jointly with `matches`. For example, you often see the indexer adding `matches` as
 follows:
@@ -671,11 +666,10 @@ d.evaluations['recall'] = 0.5
 d.evaluations['recall'].description = 'recall at 10'
 d.evaluations['recall'].op_name = 'recall()'
 for evaluation_key, evaluation_score in d.evaluations.items():
-    print(f' {evaluation_key} => {evaluation_score.description}: {evaluation_score.value}') 
+    print(f' {evaluation_key} => {evaluation_score.description}: {evaluation_score.value}')
 ```
 
 ```text
  precision => precision at 10: 1.0
  recall => recall at 10: 0.5
 ```
-
