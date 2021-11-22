@@ -1,15 +1,15 @@
 name: CI
 
-on:
-  pull_request:
-    paths-ignore:
-      - 'docs/**'
-      - 'README.md'
+# on:
+#   pull_request:
+#     paths-ignore:
+#       - 'docs/**'
+#       - 'README.md'
 
-#on:
-#  push:
-#    branches-ignore:
-#      - '**'  # temporally ignore all
+on:
+ push:
+   branches-ignore:
+     - '**'  # temporally ignore all
 jobs:
   commit-lint:
     runs-on: ubuntu-latest

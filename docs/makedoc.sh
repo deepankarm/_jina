@@ -24,6 +24,7 @@ if [[ $1 == "development" ]]; then
   if [[ ${current_branch} != ${DEFAULT_BRANCH} ]]; then
     ARR_SMV_BRANCH_WHITELIST+=" ${current_branch}"
   fi
+fi
 
 
 ARR_SMV_BRANCH_WHITELIST+=" ${DEFAULT_BRANCH}"
