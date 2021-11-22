@@ -22,8 +22,8 @@ jobs:
           cd jina
           git fetch origin docs-executor-best-practice-use-executors:docs-executor-best-practice-use-executors feat-star-routing-streamer:feat-star-routing-streamer
           # git clone https://github.com/deepankarm/_jina
-          git branch -l
-          branches=$(git branch -l)
+          # git branch -l
+          branches=$(git for-each-ref --format='%(refname:short)' refs/heads/)
           for i in ${branches}; do
             echo $i
           done
