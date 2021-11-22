@@ -6,6 +6,9 @@ on:
       branch:
         required: true
         default: master
+      num_tags:
+        required: false
+        default: 10
 
 jobs:
   deploy:
@@ -29,5 +32,12 @@ jobs:
           done
           # echo $branches
           echo "Well!"
-          git describe --tags $(git rev-list --tags --max-count=20)
-          
+          # git describe --tags $(git rev-list --tags --max-count=20)
+          last_n_released_tags=$(curl -s -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/jina-ai/jina/releases?per_page=${{ github.event.inputs.branch }}" \
+            | jq -r '.[].tag_name')
+          for release_tag in ${last_n_released_tags}; do
+            echo $release_tag
+            git fetch origin $release_tag:$release_tag
+          done
+          echo "Well again!"
