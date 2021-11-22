@@ -108,6 +108,7 @@ extensions = [
     'myst_parser',
     'sphinx_design',
     'sphinx_inline_tabs',
+    'sphinx_multiversion',
 ]
 
 myst_enable_extensions = ['colon_fence']
@@ -185,6 +186,23 @@ ogp_custom_meta_tags = [
 <script async defer src="https://buttons.github.io/buttons.js"></script>
     ''',
 ]
+
+
+def get_latest_version() -> str:
+    import json
+    import urllib.request
+
+    try:
+        versions = json.loads(urllib.request.urlopen('https://api.github.com/repos/jina-ai/jina/releases?per_page=1').read())
+        return versions[0]['tag_name']
+    except:
+        return 'master'
+
+html_context = {'latest_jina_version': get_latest_version()}
+latest_version = get_latest_version()
+smv_tag_whitelist = 'v2.4.7'
+smv_branch_whitelist = 'master'
+smv_remote_whitelist = None
 
 
 def add_server_address(app):
