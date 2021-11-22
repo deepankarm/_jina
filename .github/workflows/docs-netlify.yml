@@ -16,7 +16,7 @@ jobs:
           echo "BRANCH_NAME=${{ github.event.inputs.branch }}" >> $GITHUB_ENV
       - uses: actions/checkout@v2
         with:
-          repository: jina-ai/jina
+          repository: deepankarm/_jina
           ref: ${{ env.BRANCH_NAME }}
       - uses: actions/setup-python@v2
         with:
