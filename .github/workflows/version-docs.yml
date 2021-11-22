@@ -24,6 +24,9 @@ jobs:
           # git clone https://github.com/deepankarm/_jina
           git branch -l
           branches=$(git branch -l)
-          echo $branches
+          for i in ${branches}; do
+            echo $i
+          done
+          # echo $branches
           echo "Well!"
           
