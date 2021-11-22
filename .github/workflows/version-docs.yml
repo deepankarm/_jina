@@ -38,6 +38,6 @@ jobs:
             | jq -r '.[].tag_name')
           for release_tag in ${last_n_released_tags}; do
             echo $release_tag
-            git fetch origin $release_tag:$release_tag
+            git fetch origin refs/tags/$release_tag:refs/tags/$release_tag
           done
           echo "Well again!"
