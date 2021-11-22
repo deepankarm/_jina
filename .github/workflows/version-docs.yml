@@ -17,8 +17,8 @@ jobs:
       - uses: actions/checkout@v2
         with:
           repository: jina-ai/jina
-          ref: ${{ env.BRANCH_NAME }}
       - run: |
           branches=$(git branch -l)
           echo $branches
+          echo "Well!"
           
