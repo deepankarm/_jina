@@ -199,9 +199,8 @@ def get_latest_version() -> str:
         return 'master'
 
 html_context = {'latest_jina_version': get_latest_version()}
-latest_version = get_latest_version()
 smv_tag_whitelist = 'v2.4.7'
-smv_branch_whitelist = 'master'
+smv_branch_whitelist = 'docs-versioning-2'
 smv_remote_whitelist = None
 
 
