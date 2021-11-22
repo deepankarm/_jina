@@ -95,9 +95,9 @@ epub_exclude_files = ['search.html']
 extensions = [
     'sphinx.ext.autodoc',
     'sphinx_autodoc_typehints',
-    'sphinx.ext.viewcode',
+    # 'sphinx.ext.viewcode',
     'sphinx.ext.coverage',
-    'sphinxcontrib.apidoc',
+    # 'sphinxcontrib.apidoc',
     'sphinxarg.ext',
     'sphinx_markdown_tables',
     'sphinx_copybutton',
@@ -187,20 +187,14 @@ ogp_custom_meta_tags = [
     ''',
 ]
 
+def smv_config(string: str):
+    return r'^{}$'.format(string.strip().replace(' ', '|'))
 
-def get_latest_version() -> str:
-    import json
-    import urllib.request
-
-    try:
-        versions = json.loads(urllib.request.urlopen('https://api.github.com/repos/jina-ai/jina/releases?per_page=1').read())
-        return versions[0]['tag_name']
-    except:
-        return 'master'
-
-html_context = {'latest_jina_version': get_latest_version()}
-smv_tag_whitelist = 'v2.4.7'
-smv_branch_whitelist = 'docs-versioning-2'
+html_context = {
+    'latest_jina_version': os.environ.get('LATEST_JINA_VERSION', 'master')
+}
+smv_tag_whitelist = smv_config(os.environ.get('SMV_TAG_WHITELIST', 'v2.4.7'))
+smv_branch_whitelist = smv_config(os.environ.get('SMV_BRANCH_WHITELIST', 'master'))
 smv_remote_whitelist = None
 
 
