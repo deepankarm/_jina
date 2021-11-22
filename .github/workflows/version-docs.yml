@@ -22,6 +22,7 @@ jobs:
           cd jina
           git fetch origin docs-executor-best-practice-use-executors:docs-executor-best-practice-use-executors feat-star-routing-streamer:feat-star-routing-streamer
           # git clone https://github.com/deepankarm/_jina
+          git branch -l
           branches=$(git branch -l)
           echo $branches
           echo "Well!"
