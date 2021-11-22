@@ -1,0 +1,24 @@
+name: Versioned docs deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        required: true
+        default: master
+
+jobs:
+  deploy:
+    name: Versioned docs deployment
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "BRANCH_NAME=${{ github.event.inputs.branch }}" >> $GITHUB_ENV
+      - uses: actions/checkout@v2
+        with:
+          repository: jina-ai/jina
+          ref: ${{ env.BRANCH_NAME }}
+      - run: |
+          branches=$(git branch -l)
+          echo $branches
+          
