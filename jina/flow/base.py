@@ -3,16 +3,26 @@ import base64
 import copy
 import itertools
 import json
+import multiprocessing
 import os
 import re
 import sys
 import threading
 import time
 import uuid
-import warnings
 from collections import OrderedDict
 from contextlib import ExitStack
-from typing import Optional, Union, Tuple, List, Set, Dict, overload, Type
+from typing import (
+    Optional,
+    Union,
+    Tuple,
+    List,
+    Set,
+    Dict,
+    overload,
+    Type,
+    TYPE_CHECKING,
+)
 
 from .builder import allowed_levels, _hanging_pods
 from .. import __default_host__
@@ -24,6 +34,7 @@ from ..enums import (
     FlowInspectType,
     GatewayProtocolType,
     InfrastructureType,
+    PollingType,
 )
 from ..excepts import (
     FlowTopologyError,
@@ -40,15 +51,15 @@ from ..helper import (
     download_mermaid_url,
     CatchAllCleanupContextManager,
 )
-from ..jaml import JAMLCompatible, JAML
-
+from ..jaml import JAMLCompatible
 from ..logging.logger import JinaLogger
 from ..parsers import set_gateway_parser, set_pod_parser, set_client_cli_parser
 from ..parsers.flow import set_flow_parser
 from ..peapods import CompoundPod, Pod
-from ..peapods.pods.factory import PodFactory
-from ..types.routing.table import RoutingTable
 from ..peapods.networking import is_remote_local_connection
+from ..peapods.pods.factory import PodFactory
+from ..peapods.pods.k8s import K8sPod
+from ..types.routing.table import RoutingTable
 
 __all__ = ['Flow']
 
@@ -61,7 +72,7 @@ class FlowType(type(ExitStack), type(JAMLCompatible)):
 
 _regex_port = r'(.*?):([0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$'
 
-if False:
+if TYPE_CHECKING:
     from ..executors import BaseExecutor
     from ..clients.base import BaseClient
     from .asyncio import AsyncFlow
@@ -77,6 +88,37 @@ FALLBACK_PARSERS = [
 
 class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
     """Flow is how Jina streamlines and distributes Executors. """
+
+    class _FlowK8sInfraResourcesManager:
+        def __init__(self, k8s_namespace: str, k8s_custom_resource_dir: Optional[str]):
+            self.k8s_namespace = k8s_namespace
+            self.k8s_custom_resource_dir = k8s_custom_resource_dir
+            self.namespace_created = False
+
+        def __enter__(self):
+            from ..peapods.pods.k8slib import kubernetes_tools, kubernetes_client
+
+            client = kubernetes_client.K8sClients().core_v1
+            list_namespaces = [
+                item.metadata.name for item in client.list_namespace().items
+            ]
+            if self.k8s_namespace not in list_namespaces:
+                with JinaLogger(f'create_{self.k8s_namespace}') as logger:
+                    logger.info(f'🏝️\tCreate Namespace "{self.k8s_namespace}"')
+                    kubernetes_tools.create(
+                        'namespace',
+                        {'name': self.k8s_namespace},
+                        logger=logger,
+                        custom_resource_dir=self.k8s_custom_resource_dir,
+                    )
+                    self.namespace_created = True
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            from ..peapods.pods.k8slib import kubernetes_client
+
+            if self.namespace_created:
+                client = kubernetes_client.K8sClients().core_v1
+                client.delete_namespace(name=self.k8s_namespace)
 
     # overload_inject_start_client_flow
     @overload
@@ -138,16 +180,17 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
         port_expose: Optional[int] = None,
         port_in: Optional[int] = None,
         port_out: Optional[int] = None,
-        prefetch: Optional[int] = 50,
-        prefetch_on_recv: Optional[int] = 1,
+        prefetch: Optional[int] = 0,
         protocol: Optional[str] = 'GRPC',
         proxy: Optional[bool] = False,
         py_modules: Optional[List[str]] = None,
         quiet: Optional[bool] = False,
         quiet_error: Optional[bool] = False,
+        replicas: Optional[int] = 1,
         runs_in_docker: Optional[bool] = False,
         runtime_backend: Optional[str] = 'PROCESS',
         runtime_cls: Optional[str] = 'GRPCRuntime',
+        shards: Optional[int] = 1,
         socket_in: Optional[str] = 'PULL_CONNECT',
         socket_out: Optional[str] = 'PUSH_CONNECT',
         ssh_keyfile: Optional[str] = None,
@@ -214,8 +257,9 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
         :param port_expose: The port that the gateway exposes for clients for GRPC connections.
         :param port_in: The port for input data, default a random port between [49152, 65535]
         :param port_out: The port for output data, default a random port between [49152, 65535]
-        :param prefetch: The number of pre-fetched requests from the client
-        :param prefetch_on_recv: The number of additional requests to fetch on every receive
+        :param prefetch: Number of requests fetched from the client before feeding into the first Executor.
+
+              Used to control the speed of data input into a Flow. 0 disables prefetch (disabled by default)
         :param protocol: Communication protocol between server and client.
         :param proxy: If set, respect the http_proxy and https_proxy environment variables. otherwise, it will unset these proxy variables before start. gRPC seems to prefer no proxy
         :param py_modules: The customized python modules need to be imported before loading the executor
@@ -226,9 +270,11 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
           `Executor cookbook <https://docs.jina.ai/fundamentals/executor/repository-structure/>`__
         :param quiet: If set, then no log will be emitted from this object.
         :param quiet_error: If set, then exception stack information will not be added to the log
+        :param replicas: The number of replicas in the pod, `port_in` and `port_out` will be set to random, and routers will be added automatically when necessary
         :param runs_in_docker: Informs a Pea that runs in a container. Important to properly set networking information
         :param runtime_backend: The parallel backend of the runtime inside the Pea
         :param runtime_cls: The runtime class to run inside the Pea
+        :param shards: The number of shards in the pod running at the same time, `port_in` and `port_out` will be set to random, and routers will be added automatically when necessary. For more details check https://docs.jina.ai/fundamentals/flow/topology/
         :param socket_in: The socket type for input port
         :param socket_out: The socket type for output port
         :param ssh_keyfile: This specifies a key to be used in ssh login, default None. regular default ssh keys will be used without specifying this argument.
@@ -323,6 +369,14 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
         ]  #: default first pod is gateway, will add when build()
         self._update_args(args, **kwargs)
 
+        self.k8s_infrastructure_manager = None
+        if self.args.infrastructure == InfrastructureType.K8S:
+            self.k8s_infrastructure_manager = self._FlowK8sInfraResourcesManager(
+                k8s_namespace=self.args.k8s_namespace or self.args.name,
+                k8s_custom_resource_dir=getattr(
+                    self.args, 'k8s_custom_resource_dir', None
+                ),
+            )
         if isinstance(self.args, argparse.Namespace):
             self.logger = JinaLogger(
                 self.__class__.__name__, **vars(self.args), **self._common_kwargs
@@ -348,12 +402,12 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
             args, _flow_parser
         )  #: for yaml dump
 
-        base_cls = self.__class__
-        base_cls_name = self.__class__.__name__
         if self._common_kwargs.get('asyncio', False) and not isinstance(
             self, AsyncPostMixin
         ):
-            self.__class__ = type(base_cls_name, (AsyncPostMixin, base_cls), {})
+            from .asyncio import AsyncFlow
+
+            self.__class__ = AsyncFlow
 
     @staticmethod
     def _parse_endpoints(op_flow, pod_name, endpoint, connect_to_last_pod=False) -> Set:
@@ -423,14 +477,15 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
                 port_expose=self.port_expose,
                 pod_role=PodRoleType.GATEWAY,
                 expose_endpoints=json.dumps(self._endpoints_mapping),
+                k8s_namespace=self.args.k8s_namespace or self.args.name,
             )
         )
 
         kwargs.update(self._common_kwargs)
         args = ArgNamespace.kwargs2namespace(kwargs, set_gateway_parser())
-
-        args.k8s_namespace = self.args.name
+        args.k8s_namespace = self.args.k8s_namespace or self.args.name
         args.connect_to_predecessor = False
+        args.noblock_on_start = True
         self._pod_nodes[GATEWAY_NAME] = PodFactory.build_pod(
             args, needs, self.args.infrastructure
         )
@@ -486,7 +541,7 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
         env: Optional[dict] = None,
         expose_public: Optional[bool] = False,
         external: Optional[bool] = False,
-        force: Optional[bool] = False,
+        force_update: Optional[bool] = False,
         gpus: Optional[str] = None,
         host: Optional[str] = '0.0.0.0',
         host_in: Optional[str] = '0.0.0.0',
@@ -498,7 +553,6 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
         name: Optional[str] = None,
         native: Optional[bool] = False,
         on_error_strategy: Optional[str] = 'IGNORE',
-        parallel: Optional[int] = 1,
         peas_hosts: Optional[List[str]] = None,
         polling: Optional[str] = 'ANY',
         port_ctrl: Optional[int] = None,
@@ -515,6 +569,7 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
         runtime_backend: Optional[str] = 'PROCESS',
         runtime_cls: Optional[str] = 'ZEDRuntime',
         scheduling: Optional[str] = 'LOAD_BALANCE',
+        shards: Optional[int] = 1,
         socket_in: Optional[str] = 'PULL_BIND',
         socket_out: Optional[str] = 'PUSH_BIND',
         ssh_keyfile: Optional[str] = None,
@@ -548,7 +603,7 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
         :param env: The map of environment variables that are available inside runtime
         :param expose_public: If set, expose the public IP address to remote when necessary, by default it exposesprivate IP address, which only allows accessing under the same network/subnet. Important to set this to true when the Pea will receive input connections from remote Peas
         :param external: The Pod will be considered an external Pod that has been started independently from the Flow.This Pod will not be context managed by the Flow.
-        :param force: If set, always pull the latest Hub Executor bundle even it exists on local
+        :param force_update: If set, always pull the latest Hub Executor bundle even it exists on local
         :param gpus: This argument allows dockerized Jina executor discover local gpu devices.
 
               Note,
@@ -582,11 +637,10 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
 
           Note, `IGNORE`, `SKIP_EXECUTOR` and `SKIP_HANDLE` do not guarantee the success execution in the sequel flow. If something
           is wrong in the upstream, it is hard to carry this exception and moving forward without any side-effect.
-        :param parallel: The number of parallel peas in the pod running at the same time, `port_in` and `port_out` will be set to random, and routers will be added automatically when necessary
-        :param peas_hosts: The hosts of the peas when parallel greater than 1.
+        :param peas_hosts: The hosts of the peas when shards greater than 1.
                   Peas will be evenly distributed among the hosts. By default,
                   peas are running on host provided by the argument ``host``
-        :param polling: The polling strategy of the Pod (when `parallel>1`)
+        :param polling: The polling strategy of the Pod (when `shards>1`)
           - ANY: only one (whoever is idle) Pea polls the message
           - ALL: all Peas poll the message (like a broadcast)
         :param port_ctrl: The port for controlling the runtime, default a random port between [49152, 65535]
@@ -608,6 +662,7 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
         :param runtime_backend: The parallel backend of the runtime inside the Pea
         :param runtime_cls: The runtime class to run inside the Pea
         :param scheduling: The strategy of scheduling workload among Peas
+        :param shards: The number of shards in the pod running at the same time, `port_in` and `port_out` will be set to random, and routers will be added automatically when necessary. For more details check https://docs.jina.ai/fundamentals/flow/topology/
         :param socket_in: The socket type for input port
         :param socket_out: The socket type for output port
         :param ssh_keyfile: This specifies a key to be used in ssh login, default None. regular default ssh keys will be used without specifying this argument.
@@ -635,8 +690,8 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
                   When use it under Python, one can use the following values additionally:
                   - a Python dict that represents the config
                   - a text file stream has `.read()` interface
-        :param uses_after: The executor attached after the Peas described by --uses, typically used for receiving from all parallels, accepted type follows `--uses`
-        :param uses_before: The executor attached after the Peas described by --uses, typically before sending to all parallels, accepted type follows `--uses`
+        :param uses_after: The executor attached after the Peas described by --uses, typically used for receiving from all shards, accepted type follows `--uses`
+        :param uses_before: The executor attached after the Peas described by --uses, typically before sending to all shards, accepted type follows `--uses`
         :param uses_metas: Dictionary of keyword arguments that will override the `metas` configuration in `uses`
         :param uses_requests: Dictionary of keyword arguments that will override the `requests` configuration in `uses`
         :param uses_with: Dictionary of keyword arguments that will override the `with` configuration in `uses`
@@ -690,7 +745,7 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
             pod_name = new_name
 
         if not pod_name:
-            pod_name = f'pod{len(op_flow._pod_nodes)}'
+            pod_name = f'executor{len(op_flow._pod_nodes)}'
 
         if not pod_name.isidentifier():
             # hyphen - can not be used in the name
@@ -745,7 +800,18 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
         # pod workspace if not set then derive from flow workspace
         args.workspace = os.path.abspath(args.workspace or self.workspace)
 
-        args.k8s_namespace = self.args.name
+        args.k8s_namespace = self.args.k8s_namespace or self.args.name
+        args.noblock_on_start = True
+        args.extra_search_paths = self.args.extra_search_paths
+        args.zmq_identity = None
+
+        # BACKWARDS COMPATIBILITY:
+        # We assume that this is used in a search Flow if replicas and shards are used
+        # Thus the polling type should be all
+        # But dont override any user provided polling
+        if args.replicas > 1 and args.shards > 1 and 'polling' not in kwargs:
+            args.polling = PollingType.ALL
+
         op_flow._pod_nodes[pod_name] = PodFactory.build_pod(
             args, needs, self.args.infrastructure
         )
@@ -858,7 +924,8 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
             },
         )
 
-    # TODO needs to be refactored - deployment should not be a dictionary. Related Ticket: https://github.com/jina-ai/jina/issues/3280
+    # TODO needs to be refactored - deployment should not be a dictionary. Related Ticket:
+    #  https://github.com/jina-ai/jina/issues/3280
     def _get_routing_table(self) -> RoutingTable:
         graph = RoutingTable()
         for pod_id, pod in self._pod_nodes.items():
@@ -890,21 +957,40 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
                     )
 
         for end, pod in self._pod_nodes.items():
+
             if end == GATEWAY_NAME:
                 end = f'end-{GATEWAY_NAME}'
 
             if pod.head_args.hosts_in_connect is None:
                 pod.head_args.hosts_in_connect = []
 
+            if isinstance(pod, K8sPod):
+                from ..peapods.pods.k8slib import kubernetes_deployment
+
+                end = kubernetes_deployment.to_dns_name(end)
             if end not in graph.pods:
                 end = end + '_head'
+            if isinstance(pod, K8sPod):
+                from ..peapods.pods.k8slib import kubernetes_deployment
+
+                end = kubernetes_deployment.to_dns_name(end)
 
             for start in pod.needs:
+                start_pod = self._pod_nodes[start]
+
                 if start == GATEWAY_NAME:
                     start = f'start-{GATEWAY_NAME}'
 
+                if isinstance(start_pod, K8sPod):
+                    from ..peapods.pods.k8slib import kubernetes_deployment
+
+                    start = kubernetes_deployment.to_dns_name(start)
                 if start not in graph.pods:
                     start = start + '_tail'
+                if isinstance(start_pod, K8sPod):
+                    from ..peapods.pods.k8slib import kubernetes_deployment
+
+                    start = kubernetes_deployment.to_dns_name(start)
 
                 start_pod = graph._get_target_pod(start)
 
@@ -949,7 +1035,16 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
             elif self.args.static_routing_table:
                 routing_table_copy.active_pod = pod
                 self._pod_nodes[pod].args.routing_table = routing_table_copy.json()
-                self._pod_nodes[pod].update_pea_args()
+                # dynamic routing does not apply to shards in a CompoundPod, only its tail
+                if not isinstance(self._pod_nodes[pod], CompoundPod):
+                    self._pod_nodes[pod].update_pea_args()
+                else:
+                    self._pod_nodes[pod].tail_args.routing_table = self._pod_nodes[
+                        pod
+                    ].args.routing_table
+                    self._pod_nodes[
+                        pod
+                    ].tail_args.static_routing_table = self.args.static_routing_table
 
     @allowed_levels([FlowBuildLevel.EMPTY])
     def build(self, copy_flow: bool = False) -> 'Flow':
@@ -1031,14 +1126,20 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
             return self.start()
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        if hasattr(self, '_stop_event'):
+            self._stop_event.set()
+
         super().__exit__(exc_type, exc_val, exc_tb)
 
         # unset all envs to avoid any side-effect
         if self.args.env:
             for k in self.args.env.keys():
-                os.unsetenv(k)
+                os.environ.pop(k, None)
+
+        # do not know why but removing these 2 lines make 2 tests fail
         if GATEWAY_NAME in self._pod_nodes:
             self._pod_nodes.pop(GATEWAY_NAME)
+
         self._build_level = FlowBuildLevel.EMPTY
         self.logger.debug('Flow is closed!')
         self.logger.close()
@@ -1059,13 +1160,15 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
         if self._build_level.value < FlowBuildLevel.GRAPH.value:
             self.build(copy_flow=False)
 
+        if self.k8s_infrastructure_manager is not None:
+            self.enter_context(self.k8s_infrastructure_manager)
+
         # set env only before the Pod get started
         if self.args.env:
             for k, v in self.args.env.items():
                 os.environ[k] = str(v)
 
         for k, v in self:
-            v.args.noblock_on_start = True
             if not getattr(v.args, 'external', False):
                 self.enter_context(v)
 
@@ -1075,7 +1178,7 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
 
         return self
 
-    def _wait_until_all_ready(self) -> bool:
+    def _wait_until_all_ready(self):
         results = {}
         threads = []
 
@@ -1134,14 +1237,17 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
 
         # kick off ip getter thread
         addr_table = []
-        t_ip = threading.Thread(
-            target=self._get_address_table, args=(addr_table,), daemon=True
-        )
-        t_ip.start()
+        t_ip = None
+        if self.args.infrastructure != InfrastructureType.K8S:
+            t_ip = threading.Thread(
+                target=self._get_address_table, args=(addr_table,), daemon=True
+            )
+            t_ip.start()
 
         for t in threads:
             t.join()
-        t_ip.join()
+        if t_ip is not None:
+            t_ip.join()
         t_m.join()
 
         error_pods = [k for k, v in results.items() if v != 'done']
@@ -1174,7 +1280,7 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
 
     @property
     def num_peas(self) -> int:
-        """Get the number of peas (parallel count) in this Flow
+        """Get the number of peas (shards count) in this Flow
 
 
         .. # noqa: DAR201"""
@@ -1220,111 +1326,67 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
     @property
     def _mermaid_str(self):
         mermaid_graph = [
-            "%%{init: {'theme': 'base', "
-            "'themeVariables': { 'primaryColor': '#32C8CD', "
-            "'edgeLabelBackground':'#fff', 'clusterBkg': '#FFCC66'}}}%%",
-            'graph LR',
+            '''
+            %%{init:{
+  "theme": "base",
+  "themeVariables": {
+      "primaryColor": "#fff",
+      "primaryBorderColor": "#fff",
+      "mainBkg": "#32C8CD",
+      "clusterBkg": "#EEEDE78C",
+      "secondaryBorderColor": "none",
+      "tertiaryBorderColor": "none",
+      "lineColor": "#a6d8da"
+      }
+}}%%
+            '''.replace(
+                '\n', ''
+            ),
+            'flowchart LR;',
         ]
 
-        start_repl = {}
-        end_repl = {}
+        pod_nodes = []
+
+        # plot subgraphs
         for node, v in self._pod_nodes.items():
-            if not v.is_singleton and v.role != PodRoleType.GATEWAY:
-                if v.args.replicas == 1:
-                    mermaid_graph.append(
-                        f'subgraph sub_{node} ["{node} ({v.args.parallel})"]'
-                    )
-                else:
-                    mermaid_graph.append(
-                        f'subgraph sub_{node} ["{node} ({v.args.replicas})({v.args.parallel})"]'
-                    )
-                    if v.is_head_router:
-                        head_router = node + '_HEAD'
-                        end_repl[node] = (head_router, '((fa:fa-random))')
-                    if v.is_tail_router:
-                        tail_router = node + '_TAIL'
-                        start_repl[node] = (tail_router, '((fa:fa-random))')
-
-                for i in range(v.args.replicas):
-                    if v.is_head_router:
-                        head_replica_router = node + f'_{i}_HEAD'
-                        if v.args.replicas == 1:
-                            end_repl[node] = (head_replica_router, '((fa:fa-random))')
-                    if v.is_tail_router:
-                        tail_replica_router = node + f'_{i}_TAIL'
-                        if v.args.replicas == 1:
-                            start_repl[node] = (tail_replica_router, '((fa:fa-random))')
-
-                    p_r = '((%s))'
-                    p_e = '[[%s]]'
-                    if v.args.replicas > 1:
-                        mermaid_graph.append(
-                            f'\t{head_router}{p_r % "head"}:::pea-->{head_replica_router}{p_e % "replica_head"}:::pea'
-                        )
-                        mermaid_graph.append(
-                            f'\t{tail_replica_router}{p_r % "replica_tail"}:::pea-->{tail_router}{p_e % "tail"}:::pea'
-                        )
-
-                    for j in range(v.args.parallel):
-                        r = v.args.uses
-                        if v.args.replicas > 1:
-                            r += f'_{i}_{j}'
-                        elif v.args.parallel > 1:
-                            r += f'_{j}'
-
-                        if v.is_head_router:
-                            mermaid_graph.append(
-                                f'\t{head_replica_router}{p_r % "head"}:::pea-->{r}{p_e % r}:::pea'
-                            )
-                        if v.is_tail_router:
-                            mermaid_graph.append(
-                                f'\t{r}{p_e % r}:::pea-->{tail_replica_router}{p_r % "tail"}:::pea'
-                            )
-                mermaid_graph.append('end')
+            pod_nodes.append(v.name)
+            mermaid_graph.extend(v._mermaid_str)
 
         for node, v in self._pod_nodes.items():
             for need in sorted(v.needs):
+                need_print = need
+                if need == 'gateway':
+                    need_print = 'gatewaystart[gateway]'
+                node_print = node
+                if node == 'gateway':
+                    node_print = 'gatewayend[gateway]'
 
-                _s = start_repl.get(
-                    need, (need, f'("{need}<br>({self._pod_nodes[need].args.uses})")')
-                )
-                _e = end_repl.get(node, (node, f'("{node}<br>({v.args.uses})")'))
                 _s_role = self._pod_nodes[need].role
                 _e_role = self._pod_nodes[node].role
+                if getattr(self._pod_nodes[need].args, 'external', False):
+                    _s_role = 'EXTERNAL'
+                if getattr(self._pod_nodes[node].args, 'external', False):
+                    _e_role = 'EXTERNAL'
                 line_st = '-->'
-
-                if _s_role in {PodRoleType.INSPECT, PodRoleType.JOIN_INSPECT}:
-                    _s = start_repl.get(need, (need, f'{{{{{need}}}}}'))
-                elif _s_role == PodRoleType.GATEWAY:
-                    _s = start_repl.get(need, (need, f'("{need}")'))
-
-                if _e_role == PodRoleType.GATEWAY:
-                    _e = ('gateway_END', f'({node})')
-                elif _e_role in {PodRoleType.INSPECT, PodRoleType.JOIN_INSPECT}:
-                    _e = end_repl.get(node, (node, f'{{{{{node}}}}}'))
-
                 if _s_role == PodRoleType.INSPECT or _e_role == PodRoleType.INSPECT:
                     line_st = '-.->'
-
                 mermaid_graph.append(
-                    f'{_s[0]}{_s[1]}:::{str(_s_role)} {line_st} {_e[0]}{_e[1]}:::{str(_e_role)}'
+                    f'{need_print}:::{str(_s_role)} {line_st} {node_print}:::{str(_e_role)};'
                 )
+
+        mermaid_graph.append(f'classDef {str(PodRoleType.INSPECT)} stroke:#F29C9F')
+
+        mermaid_graph.append(f'classDef {str(PodRoleType.JOIN_INSPECT)} stroke:#F29C9F')
         mermaid_graph.append(
-            f'classDef {str(PodRoleType.POD)} fill:#32C8CD,stroke:#009999'
+            f'classDef {str(PodRoleType.GATEWAY)} fill:none,color:#000,stroke:none'
         )
         mermaid_graph.append(
-            f'classDef {str(PodRoleType.INSPECT)} fill:#ff6666,color:#fff'
+            f'classDef {str(PodRoleType.INSPECT_AUX_PASS)} stroke-dasharray: 2 2'
         )
-        mermaid_graph.append(
-            f'classDef {str(PodRoleType.JOIN_INSPECT)} fill:#ff6666,color:#fff'
-        )
-        mermaid_graph.append(
-            f'classDef {str(PodRoleType.GATEWAY)} fill:#6E7278,color:#fff'
-        )
-        mermaid_graph.append(
-            f'classDef {str(PodRoleType.INSPECT_AUX_PASS)} fill:#fff,color:#000,stroke-dasharray: 5 5'
-        )
-        mermaid_graph.append('classDef pea fill:#009999,stroke:#1E6E73')
+        mermaid_graph.append(f'classDef HEADTAIL fill:#32C8CD1D')
+
+        mermaid_graph.append(f'\nclassDef EXTERNAL fill:#fff,stroke:#32C8CD')
+
         return '\n'.join(mermaid_graph)
 
     def plot(
@@ -1368,7 +1430,7 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
 
         mermaid_str = op_flow._mermaid_str
         if vertical_layout:
-            mermaid_str = mermaid_str.replace('graph LR', 'graph TD')
+            mermaid_str = mermaid_str.replace('flowchart LR', 'flowchart TD')
 
         image_type = 'svg'
         if output and not output.endswith('svg'):
@@ -1528,10 +1590,22 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
             )
         return address_table
 
-    def block(self):
-        """Block the process until user hits KeyboardInterrupt"""
+    def block(
+        self, stop_event: Optional[Union[threading.Event, multiprocessing.Event]] = None
+    ):
+        """Block the Flow until `stop_event` is set or user hits KeyboardInterrupt
+
+        :param stop_event: a threading event or a multiprocessing event that onces set will resume the control Flow
+            to main thread.
+        """
         try:
-            threading.Event().wait()
+            if stop_event is None:
+                self._stop_event = (
+                    threading.Event()
+                )  #: this allows `.close` to close the Flow from another thread/proc
+                self._stop_event.wait()
+            else:
+                stop_event.wait()
         except KeyboardInterrupt:
             pass
 
@@ -1584,6 +1658,16 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
         .. # noqa: DAR201"""
         return os.path.abspath(self.args.workspace or './')
 
+    @workspace.setter
+    def workspace(self, value: str):
+        """set workspace dir for flow & all pods
+
+        :param value: workspace to be set
+        """
+        self.args.workspace = value
+        for k, p in self:
+            p.args.workspace = value
+
     @property
     def workspace_id(self) -> Dict[str, str]:
         """Get all Pods' ``workspace_id`` values in a dict
@@ -1604,10 +1688,10 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
         for k, p in self:
             if hasattr(p.args, 'workspace_id'):
                 p.args.workspace_id = value
-                args = getattr(p, 'peas_args', getattr(p, 'replicas_args', None))
+                args = getattr(p, 'peas_args', getattr(p, 'shards_args', None))
                 if args is None:
                     raise ValueError(
-                        f'could not find "peas_args" or "replicas_args" on {p}'
+                        f'could not find "peas_args" or "shards_args" on {p}'
                     )
                 values = None
                 if isinstance(args, dict):
@@ -1620,6 +1704,25 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
                     if v and isinstance(v, List):
                         for i in v:
                             i.workspace_id = value
+
+    @property
+    def env(self) -> Optional[Dict]:
+        """Get all envs to be set in the Flow
+
+        :return: envs as dict
+        """
+        return self.args.env
+
+    @env.setter
+    def env(self, value: Dict[str, str]):
+        """set env vars for flow & all pods.
+        This can be used by jinad to set envs for Flow and all child objects
+
+        :param value: value to be set
+        """
+        self.args.env = value
+        for k, v in self:
+            v.args.env = value
 
     @property
     def identity(self) -> Dict[str, str]:
@@ -1701,29 +1804,50 @@ class Flow(PostMixin, JAMLCompatible, ExitStack, metaclass=FlowType):
     # for backward support
     join = needs
 
-    def rolling_update(self, pod_name: str, dump_path: Optional[str] = None):
+    def rolling_update(
+        self,
+        pod_name: str,
+        dump_path: Optional[str] = None,
+        *,
+        uses_with: Optional[Dict] = None,
+    ):
         """
-        Reload Pods sequentially - only used for compound pods.
+        Reload all replicas of a pod sequentially
 
-        :param dump_path: the path from which to read the dump data
         :param pod_name: pod to update
+        :param dump_path: **backwards compatibility** This function was only accepting dump_path as the only potential arg to override
+        :param uses_with: a Dictionary of arguments to restart the executor with
         """
-        # TODO: By design after the Flow object started, Flow shouldn't have memory access to its sub-objects anymore.
-        #  All controlling should be issued via Network Request, not via memory access.
-        #  In the current master, we have Flow.rolling_update() & Flow.dump() method avoid the above design.
-        #  Avoiding this design make the whole system NOT cloud-native.
-        warnings.warn(
-            'This function is experimental and facing potential refactoring',
-            FutureWarning,
+        from ..helper import run_async
+
+        run_async(
+            self._pod_nodes[pod_name].rolling_update,
+            dump_path=dump_path,
+            uses_with=uses_with,
+            any_event_loop=True,
         )
 
-        compound_pod = self._pod_nodes[pod_name]
-        if isinstance(compound_pod, CompoundPod):
-            compound_pod.rolling_update(dump_path)
-        else:
-            raise ValueError(
-                f'The BasePod {pod_name} is not a CompoundPod and does not support updating'
-            )
+    def scale(
+        self,
+        pod_name: str,
+        replicas: int,
+    ):
+        """
+        Scale the amount of replicas of a given Executor.
+
+        :param pod_name: pod to update
+        :param replicas: The number of replicas to scale to
+        """
+
+        # TODO when replicas-host is ready, needs to be passed here
+
+        from ..helper import run_async
+
+        run_async(
+            self._pod_nodes[pod_name].scale,
+            replicas=replicas,
+            any_event_loop=True,
+        )
 
     @property
     def client_args(self) -> argparse.Namespace:

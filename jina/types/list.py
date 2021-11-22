@@ -34,7 +34,7 @@ class ListView(ProtoTypeMixin, MutableSequence):
             self[index] = object
 
     def __getitem__(self, i: Union[int, slice]):
-        if i >= len(self):
+        if isinstance(i, int) and i >= len(self):
             raise IndexError('list index out of range')
         value = self._pb_body[i]
         if isinstance(value, struct_pb2.Struct):
@@ -73,11 +73,3 @@ class ListView(ProtoTypeMixin, MutableSequence):
                 return True
 
         return False
-
-    def clear(self):
-        """
-        # noqa: DAR101
-        # noqa: DAR102
-        # noqa: DAR103
-        """
-        self._pb_body.Clear()

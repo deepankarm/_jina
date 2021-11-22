@@ -1,19 +1,17 @@
 import asyncio
 from contextlib import nullcontext
-from typing import Callable, Union, Optional
+from typing import TYPE_CHECKING, Optional
 
 import grpc
 
 from ..base import BaseClient
 from ..helper import callback_exec
-from ..request import GeneratorSourceType
 from ...excepts import BadClient, BadClientInput
 from ...logging.profile import ProgressBar
 from ...proto import jina_pb2_grpc
-from ...types.request import Response
 
-InputType = Union[GeneratorSourceType, Callable[..., GeneratorSourceType]]
-CallbackFnType = Optional[Callable[[Response], None]]
+if TYPE_CHECKING:
+    from . import InputType, CallbackFnType
 
 
 class GRPCBaseClient(BaseClient):
@@ -24,10 +22,10 @@ class GRPCBaseClient(BaseClient):
 
     async def _get_results(
         self,
-        inputs: InputType,
-        on_done: Callable,
-        on_error: Callable = None,
-        on_always: Callable = None,
+        inputs: 'InputType',
+        on_done: 'CallbackFnType',
+        on_error: Optional['CallbackFnType'] = None,
+        on_always: Optional['CallbackFnType'] = None,
         **kwargs,
     ):
         try:
@@ -43,7 +41,11 @@ class GRPCBaseClient(BaseClient):
                 stub = jina_pb2_grpc.JinaRPCStub(channel)
                 self.logger.debug(f'connected to {self.args.host}:{self.args.port}')
 
-                cm1 = ProgressBar() if self.show_progress else nullcontext()
+                cm1 = (
+                    ProgressBar(total_length=self._inputs_length)
+                    if self.show_progress
+                    else nullcontext()
+                )
 
                 with cm1 as p_bar:
                     async for resp in stub.Call(req_iter):

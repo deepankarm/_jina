@@ -21,15 +21,13 @@ docker run jinaai/jina:latest
 
 ## More install options
 
-Version identifiers [are explained here](https://github.com/jina-ai/jina/blob/master/RELEASE.md). Jina can run
-on [Windows Subsystem for Linux](https://docs.microsoft.com/en-us/windows/wsl/install-win10). We welcome the community
-to help us with [native Windows support](https://github.com/jina-ai/jina/issues/1252).
+Version identifiers [are explained here](https://github.com/jina-ai/jina/blob/master/RELEASE.md).
 
 ### Minimum
 
-Minimum install enables basic features of Jina, but without support on HTTP, WebSocket, Docker & Hub.
+Minimum install enables basic features of Jina, but without support for HTTP, WebSocket, Docker and Hub.
 
-Minimum install is often used when building & depolying an Executor.
+Minimum install is often used when building and depolying an Executor.
 
 
 ````{tab} via PyPI
@@ -59,7 +57,7 @@ docker run jinaai/jina:latest
 
 ### Minimum but more performant
 
-Same as Minimum install, but also install `uvloop` & `lz4`.
+Same as minimum install, but also install `uvloop` and `lz4`.
 
 
 ````{tab} via PyPI
@@ -90,7 +88,7 @@ docker run jinaai/jina:latest-perf
 
 ### With Daemon (JinaD)
 
-Same as Minimum install, but also install `uvloop` & `lz4`.
+Same as minimum install, but also install `uvloop` and `lz4`.
 
 ```shell
 pip install "jina[daemon]"
@@ -120,7 +118,7 @@ docker run jinaai/jina:latest-devel
 
 ### Prerelease
 
-Prerelease is the version always synced with `master` branch of Jina Github repository.
+Prerelease is the version always synced with the `master` branch of Jina's GitHub repository.
 
 ````{tab} via PyPI
 

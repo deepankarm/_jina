@@ -29,14 +29,14 @@ with f:
 
 ```console
 
-           pod0@47887[L]:ready and listening
+       executor@47887[L]:ready and listening
         gateway@47887[L]:ready and listening
            Flow@47887[I]:🎉 Flow is ready to use!
 	🔗 Protocol: 		GRPC
 	🏠 Local access:	0.0.0.0:49242
 	🔒 Private network:	192.168.178.31:49242
 	🌐 Public address:	217.70.138.123:49242
-           pod0@47893[E]:NotImplementedError('no time for it')
+       executor@47893[E]:NotImplementedError('no time for it')
  add "--quiet-error" to suppress the exception details
 Traceback (most recent call last):
   File "/Users/hanxiao/Documents/jina/jina/peapods/runtimes/zmq/zed.py", line 250, in _msg_callback
@@ -127,11 +127,18 @@ An Executor can be loaded from and stored to a YAML file. The YAML file has the 
 ```yaml
 jtype: MyExecutor
 with:
-  ...
+  parameter_1: foo
+  parameter_2: bar
 metas:
-  ...
+  name: MyExecutor
+  description: "MyExecutor does a thing to the stuff in your Documents"
+  workspace: workspace
+  py_modules:
+    - executor.py
 requests:
-  ...
+  index: MyExecutor_index_method
+  search: MyExecutor_search_method
+  random: MyExecutor_other_method
 ```
 
 - `jtype` is a string. Defines the class name, interchangeable with bang mark `!`;

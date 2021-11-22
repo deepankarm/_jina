@@ -15,6 +15,7 @@ def mixin_hub_pull_options_parser(parser):
         help='If set, install `requirements.txt` in the Hub Executor bundle to local',
     ),
     gp.add_argument(
+        '--force-update',
         '--force',
         action='store_true',
         default=False,
@@ -36,6 +37,6 @@ def mixin_hub_pull_parser(parser):
     parser.add_argument(
         'uri',
         type=hub_uri,
-        help='The URI of the executor to pull (e.g., jinahub[+docker]://UUID8)',
+        help='The URI of the executor to pull (e.g., jinahub[+docker]://NAME)',
     )
     mixin_hub_pull_options_parser(parser)

@@ -80,9 +80,44 @@ def test_install_requirements():
     )
 
 
+def test_is_requirement_installed(tmpfile):
+    with open(tmpfile, 'w') as f:
+        f.write('jina==0.0.1\npydatest==0.0.1\nfinefinetuner==0.0.1')
+    assert not helper.is_requirements_installed(tmpfile)
+
+    with open(tmpfile, 'w') as f:
+        f.write('pytest==0.0.1')
+    with pytest.warns(None, match='VersionConflict') as record:
+        assert helper.is_requirements_installed(tmpfile, show_warning=True)
+    assert len(record) == 1
+
+    with pytest.warns(None) as record:
+        assert helper.is_requirements_installed(tmpfile, show_warning=False)
+    assert len(record) == 0
+
+    with open(tmpfile, 'w') as f:
+        f.write('jina-awesome-nonexist')
+    assert not helper.is_requirements_installed(tmpfile)
+    with pytest.warns(None) as record:
+        assert not helper.is_requirements_installed(tmpfile, show_warning=True)
+    assert len(record) == 1
+
+    with pytest.warns(None) as record:
+        assert not helper.is_requirements_installed(tmpfile, show_warning=False)
+    assert len(record) == 0
+
+    with open(tmpfile, 'w') as f:
+        f.writelines(['pytest'])
+    assert helper.is_requirements_installed(tmpfile)
+
+
 def test_disk_cache(tmpfile):
     raise_exception = True
     result = 1
+
+    # create an invalid cache file
+    with open(str(tmpfile), 'w') as f:
+        f.write('Oops: db type could not be determined')
 
     @disk_cache_offline(cache_file=str(tmpfile))
     def _myfunc(force=False) -> bool:

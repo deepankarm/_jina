@@ -1,9 +1,13 @@
+from contextlib import nullcontext
 from functools import partialmethod
-from typing import Optional, Dict, List, AsyncGenerator
+from typing import Optional, Dict, List, AsyncGenerator, TYPE_CHECKING
 
-from .base import CallbackFnType, InputType
+from ..enums import InfrastructureType
 from ..helper import run_async
-from ..types.request import Response
+
+if TYPE_CHECKING:
+    from .base import CallbackFnType, InputType
+    from ..types.request import Response
 
 
 class PostMixin:
@@ -12,10 +16,10 @@ class PostMixin:
     def post(
         self,
         on: str,
-        inputs: Optional[InputType] = None,
-        on_done: CallbackFnType = None,
-        on_error: CallbackFnType = None,
-        on_always: CallbackFnType = None,
+        inputs: Optional['InputType'] = None,
+        on_done: Optional['CallbackFnType'] = None,
+        on_error: Optional['CallbackFnType'] = None,
+        on_always: Optional['CallbackFnType'] = None,
         parameters: Optional[Dict] = None,
         target_peapod: Optional[str] = None,
         request_size: int = 100,
@@ -23,7 +27,7 @@ class PostMixin:
         continue_on_error: bool = False,
         return_results: bool = False,
         **kwargs,
-    ) -> Optional[List[Response]]:
+    ) -> Optional[List['Response']]:
         """Post a general data request to the Flow.
 
         :param inputs: input data which can be an Iterable, a function which returns an Iterable, or a single Document id.
@@ -57,18 +61,31 @@ class PostMixin:
             if return_results:
                 return result
 
-        return run_async(
-            _get_results,
-            inputs=inputs,
-            on_done=on_done,
-            on_error=on_error,
-            on_always=on_always,
-            exec_endpoint=on,
-            target_peapod=target_peapod,
-            parameters=parameters,
-            request_size=request_size,
-            **kwargs,
-        )
+        if (
+            'disable_portforward' not in kwargs.keys()
+            and hasattr(self.args, 'infrastructure')
+            and self.args.infrastructure == InfrastructureType.K8S
+        ):
+            from ..peapods.pods.k8slib import kubernetes_tools
+
+            context_mgr = kubernetes_tools.get_port_forward_contextmanager(
+                self.args.k8s_namespace or self.args.name, self.port_expose
+            )
+        else:
+            context_mgr = nullcontext()
+        with context_mgr:
+            return run_async(
+                _get_results,
+                inputs=inputs,
+                on_done=on_done,
+                on_error=on_error,
+                on_always=on_always,
+                exec_endpoint=on,
+                target_peapod=target_peapod,
+                parameters=parameters,
+                request_size=request_size,
+                **kwargs,
+            )
 
     # ONLY CRUD, for other request please use `.post`
     index = partialmethod(post, '/index')
@@ -83,17 +100,17 @@ class AsyncPostMixin:
     async def post(
         self,
         on: str,
-        inputs: Optional[InputType] = None,
-        on_done: CallbackFnType = None,
-        on_error: CallbackFnType = None,
-        on_always: CallbackFnType = None,
+        inputs: Optional['InputType'] = None,
+        on_done: Optional['CallbackFnType'] = None,
+        on_error: Optional['CallbackFnType'] = None,
+        on_always: Optional['CallbackFnType'] = None,
         parameters: Optional[Dict] = None,
         target_peapod: Optional[str] = None,
         request_size: int = 100,
         show_progress: bool = False,
         continue_on_error: bool = False,
         **kwargs,
-    ) -> AsyncGenerator[None, Response]:
+    ) -> AsyncGenerator[None, 'Response']:
         """Post a general data request to the Flow.
 
         :param inputs: input data which can be an Iterable, a function which returns an Iterable, or a single Document id.

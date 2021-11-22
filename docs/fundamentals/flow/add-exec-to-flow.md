@@ -5,6 +5,10 @@
 Executors can be run as a local thread/process, a remote process, inside a Docker container, or even inside a remote
 Docker container.
 
+```{tip}
+
+You can see the exhaustive list of options for adding an Executor [here](https://docs.jina.ai/cli/#executor).
+```
 
 
 ## Chain `.add()`
@@ -17,7 +21,7 @@ from jina import Flow
 f = Flow().add().add().add().add()
 ```
 
-```{figure} ../../../.github/2.0/chain-flow.svg
+```{figure} chain-flow.svg
 :align: center
 ```
 
@@ -109,6 +113,10 @@ requests:
 ````{tab} Dict
 ```python
 from jina import Flow
+from jina import Executor
+
+class MyExecutor(Executor):
+    ...
 
 f = Flow().add(
     uses={
@@ -118,8 +126,189 @@ f = Flow().add(
 ```
 ````
 
+### Executor discovery
+By default, the Flow will attempt to retrieve the Executors' source files and YAML config files from the working 
+directory and other paths set in the `PATH` environment variable. If your Executor's source files and YAML config are 
+located elsewhere, you can specify their locations using the parameter 
+`extra_search_paths`.
+
+For example, suppose we have the following project structure where `app/` represents the working directory:
+```
+.
+├── app
+│   └── ▶ main.py
+└── executor
+    ├── config.yml
+    └── my_executor.py
+```
+`executor/my_executor.py`:
+```python
+from jina import Executor, DocumentArray, requests
+
+class MyExecutor(Executor):
+    @requests
+    def foo(self, docs: DocumentArray, **kwargs):
+        pass
+```
+
+`executor/config.yml`:
+```yaml
+jtype: MyExecutor
+metas:
+  py_modules:
+    - executor.py
+```
+
+Now, in `app/main.py`, to correctly load the Executor, you can specify the directory of the Executor like so:
+```{code-block} python
+---
+emphasize-lines: 2
+---
+from jina import Flow, Document
+f = Flow(extra_search_paths=['../executor']).add(uses='config.yml')
+with f:
+    r = f.post('/', inputs=Document())
+```
 
 
+````{admonition} Important
+:class: important
+If you are creating a Flow from a YAML config file which is located outside the working directory, you just need to 
+specify a correct relative or absolute path of the Flow's YAML config file and make all paths to Executor config files 
+relative to the Flow config file. The Flow will infer its config file location and add it to `extra_search_paths`:
+```
+.
+├── app
+│   └── ▶ main.py
+├── flow
+│   └── flow.yml
+└── executor
+    ├── config.yml
+    └── my_executor.py
+```
+`flow.yml`:
+```yaml
+jtype: Flow
+executors:
+  - name: executor
+    uses: ../executor/config.yml
+```
+
+`main.py`:
+```python
+from jina import Flow, Document
+f = Flow.load_config('../flow/flow.yml')
+with f:
+    r = f.post('/', inputs=Document())
+```
+````
+
+## Override Executor config
+
+You can override an executor's meta configs when creating a flow.
+
+### Override `metas` configuration
+To override the `metas` configuration of an executor, use `uses_metas`:
+```python
+from jina import Executor, requests, Flow
+class MyExecutor(Executor):
+    @requests
+    def foo(self, docs, **kwargs):
+        print(self.metas.workspace)
+
+flow = Flow().add(
+    uses=MyExecutor,
+    uses_metas={'workspace': 'different_workspace'},
+)
+with flow as f:
+    f.post('/')
+```
+
+```text
+      executor0@219291[L]:ready and listening
+        gateway@219291[L]:ready and listening
+           Flow@219291[I]:🎉 Flow is ready to use!
+	🔗 Protocol: 		GRPC
+	🏠 Local access:	0.0.0.0:58827
+	🔒 Private network:	192.168.1.101:58827
+different_workspace
+```
+
+
+### Override `with` configuration
+To override the `with` configuration of an executor, use `uses_with`. The `with` configuration refers to user-defined 
+constructor kwargs.
+```python
+from jina import Executor, requests, Flow
+
+class MyExecutor(Executor):
+    def __init__(self, param1=1, param2=2, param3=3, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.param1 = param1
+        self.param2 = param2
+        self.param3 = param3
+
+    @requests
+    def foo(self, docs, **kwargs):
+        print('param1:', self.param1)
+        print('param2:', self.param2)
+        print('param3:', self.param3)
+
+flow = Flow().add(uses=MyExecutor, uses_with={'param1': 10, 'param3': 30})
+with flow as f:
+    f.post('/')
+```
+```text
+      executor0@219662[L]:ready and listening
+        gateway@219662[L]:ready and listening
+           Flow@219662[I]:🎉 Flow is ready to use!
+	🔗 Protocol: 		GRPC
+	🏠 Local access:	0.0.0.0:32825
+	🔒 Private network:	192.168.1.101:32825
+	🌐 Public address:	197.28.82.165:32825
+param1: 10
+param2: 2
+param3: 30
+```
+
+
+### Override `requests` configuration
+You can override the `requests` configuration of an executor and bind methods to endpoints that you provide. In the following codes, we replace the endpoint `/foo` binded to the `foo()` function with `/non_foo` and add a new endpoint `/bar` for binding `bar()`. Note the `all_req()` function is binded to **all** the endpoints except those explicitly binded to other functions, i.e. `/non_foo` and `/bar`.
+
+
+```python
+from jina import Executor, requests, Flow
+
+class MyExecutor(Executor):
+    @requests
+    def all_req(self, parameters, **kwargs):
+        print(f'all req {parameters.get("recipient")}')
+        
+    @requests(on='/foo')
+    def foo(self, parameters, **kwargs):
+        print(f'foo {parameters.get("recipient")}')
+    
+    def bar(self, parameters, **kwargs):
+        print(f'bar {parameters.get("recipient")}')
+
+flow = Flow().add(uses=MyExecutor, uses_requests={'/bar': 'bar', '/non_foo': 'foo', })
+with flow as f:
+    f.post('/bar', parameters={'recipient': 'bar()'})
+    f.post('/non_foo', parameters={'recipient': 'foo()'})
+    f.post('/foo', parameters={'recipient': 'all_req()'})
+```
+
+```text
+      executor0@221058[L]:ready and listening
+        gateway@221058[L]:ready and listening
+           Flow@221058[I]:🎉 Flow is ready to use!
+	🔗 Protocol: 		GRPC
+	🏠 Local access:	0.0.0.0:36507
+	🔒 Private network:	192.168.1.101:36507
+	🌐 Public address:	197.28.82.165:36507
+bar
+foo
+```
 
 ## Add remote Executor
 
@@ -174,107 +363,6 @@ the `connect_to_predecessor` argument and `port_out` to the Executor in front.
 f.add(name='remote', host='123.45.67.89', port_out=23456).add(name='local', connect_to_predecessor=True)
 ```
 
-## Override Executor config
-
-You can override an executor's meta configs when creating a flow.
-
-### Override `metas` configuration
-To override the `metas` configuration of an executor, use `uses_metas`:
-```python
-from jina import Executor, requests, Flow
-class MyExecutor(Executor):
-    @requests
-    def foo(self, docs, **kwargs):
-        print(self.metas.workspace)
-
-flow = Flow().add(
-    uses=MyExecutor,
-    uses_metas={'workspace': 'different_workspace'},
-)
-with flow as f:
-    f.post('/')
-```
-
-```text
-           pod0@219291[L]:ready and listening
-        gateway@219291[L]:ready and listening
-           Flow@219291[I]:🎉 Flow is ready to use!
-	🔗 Protocol: 		GRPC
-	🏠 Local access:	0.0.0.0:58827
-	🔒 Private network:	192.168.1.101:58827
-different_workspace
-```
-
-
-### Override `with` configuration
-To override the `with` configuration of an executor, use `uses_with`. The `with` configuration refers to user-defined 
-constructor kwargs.
-```python
-from jina import Executor, requests, Flow
-
-class MyExecutor(Executor):
-    def __init__(self, param1=1, param2=2, param3=3, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.param1 = param1
-        self.param2 = param2
-        self.param3 = param3
-
-    @requests
-    def foo(self, docs, **kwargs):
-        print('param1:', self.param1)
-        print('param2:', self.param2)
-        print('param3:', self.param3)
-
-flow = Flow().add(uses=MyExecutor, uses_with={'param1': 10, 'param3': 30})
-with flow as f:
-    f.post('/')
-```
-```text
-           pod0@219662[L]:ready and listening
-        gateway@219662[L]:ready and listening
-           Flow@219662[I]:🎉 Flow is ready to use!
-	🔗 Protocol: 		GRPC
-	🏠 Local access:	0.0.0.0:32825
-	🔒 Private network:	192.168.1.101:32825
-	🌐 Public address:	197.28.82.165:32825
-param1: 10
-param2: 2
-param3: 30
-```
-
-
-### Override `requests` configuration
-You can override the `requests` configuration of an executor and bind methods to endpoints that you provide:
-
-
-```python
-from jina import Executor, requests, Flow
-
-class MyExecutor(Executor):
-    @requests
-    def foo(self, docs, **kwargs):
-        print('foo')
-    
-    def bar(self, docs, **kwargs):
-        print('bar')
-
-flow = Flow().add(uses=MyExecutor, uses_requests={'/index': 'bar'})
-with flow as f:
-    f.post('/index')
-    f.post('/dummy')
-```
-
-```text
-           pod0@221058[L]:ready and listening
-        gateway@221058[L]:ready and listening
-           Flow@221058[I]:🎉 Flow is ready to use!
-	🔗 Protocol: 		GRPC
-	🏠 Local access:	0.0.0.0:36507
-	🔒 Private network:	192.168.1.101:36507
-	🌐 Public address:	197.28.82.165:36507
-bar
-foo
-```
 
 ## Summary: common patterns
 

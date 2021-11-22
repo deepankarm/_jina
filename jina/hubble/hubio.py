@@ -5,7 +5,6 @@ import hashlib
 import json
 import os
 import random
-import warnings
 from pathlib import Path
 from typing import Optional, Dict
 from urllib.parse import urlencode
@@ -19,16 +18,16 @@ from .helper import (
     upload_file,
     disk_cache_offline,
 )
-from .helper import install_requirements
 from .hubapi import (
     install_local,
     get_dist_path_of_executor,
     load_secret,
     dump_secret,
     get_lockfile,
+    install_package_dependencies,
 )
 from .. import __resources_path__
-from ..helper import get_full_version, ArgNamespace
+from ..helper import get_full_version, ArgNamespace, colored
 from ..importer import ImportExtensions
 from ..logging.logger import JinaLogger
 from ..parsers.hubble import set_hub_parser
@@ -98,77 +97,92 @@ class HubIO:
         print(
             Panel.fit(
                 '''
-[bold green]Executor[/bold green] is how Jina processes [bold]Document[/bold]. 
+[bold green]Executor[/bold green] is how Jina processes [bold]Document[/bold].
 
 This guide helps you to create your own Executor in 30 seconds.''',
                 title='Create New Executor',
             )
         )
 
-        exec_name = Prompt.ask(
-            ':grey_question: What is the [bold]name[/bold] of your executor?\n'
-            '[dim]CamelCase is required[/dim]',
-            default=f'MyExecutor{random.randint(0, 100)}',
+        exec_name = (
+            self.args.name
+            if self.args.name
+            else Prompt.ask(
+                ':grey_question: What is the [bold]name[/bold] of your executor?\n'
+                '[dim]CamelCase is required[/dim]',
+                default=f'MyExecutor{random.randint(0, 100)}',
+            )
         )
 
-        exec_path = Prompt.ask(
-            ':grey_question: [bold]Which folder[/bold] to store your executor?',
-            default=os.path.join(os.getcwd(), exec_name),
+        exec_path = (
+            self.args.path
+            if self.args.path
+            else Prompt.ask(
+                ':grey_question: [bold]Which folder[/bold] to store your executor?',
+                default=os.path.join(os.getcwd(), exec_name),
+            )
         )
-
         exec_description = '{{}}'
         exec_keywords = '{{}}'
         exec_url = '{{}}'
 
         is_dockerfile = False
 
-        if Confirm.ask(
+        if self.args.advance_configuration or Confirm.ask(
             '[green]That\'s all we need to create an Executor![/green]\n'
             ':grey_question: Or do you want to proceed to advanced configuration',
             default=False,
         ):
             exec_description = (
-                Prompt.ask(
-                    ':grey_question: Please give a [bold]short description[/bold] of your executor?\n'
-                    f'[dim]Example: {exec_name} embeds images into 128-dim vectors using ResNet.[/dim]'
+                self.args.description
+                if self.args.description
+                else (
+                    Prompt.ask(
+                        ':grey_question: Please give a [bold]short description[/bold] of your executor?\n'
+                        f'[dim]Example: {exec_name} embeds images into 128-dim vectors using ResNet.[/dim]'
+                    )
                 )
-                or exec_description
             )
 
             exec_keywords = (
-                Prompt.ask(
-                    ':grey_question: Please give some [bold]keywords[/bold] to help people search your executor [dim](separated by space)[/dim]\n'
-                    f'[dim]Example: image cv embedding encoding resnet[/dim]'
+                self.args.keywords
+                if self.args.keywords
+                else (
+                    Prompt.ask(
+                        ':grey_question: Please give some [bold]keywords[/bold] to help people search your executor [dim](separated by comma)[/dim]\n'
+                        f'[dim]Example: image cv embedding encoding resnet[/dim]'
+                    )
                 )
-                or exec_keywords
             )
 
             exec_url = (
-                Prompt.ask(
-                    ':grey_question: What is the [bold]URL[/bold] for GitHub repo?\n'
-                    f'[dim]Example: https://github.com/yourname/my-executor[/dim]'
+                self.args.url
+                if self.args.url
+                else (
+                    Prompt.ask(
+                        ':grey_question: What is the [bold]URL[/bold] for GitHub repo?\n'
+                        f'[dim]Example: https://github.com/yourname/my-executor[/dim]'
+                    )
                 )
-                or exec_url
             )
 
             print(
                 Panel.fit(
                     '''
-[bold]Dockerfile[/bold] describes how this executor will be built. It is useful when 
-your executor has non-trivial dependencies or must be run under certain environment. 
+[bold]Dockerfile[/bold] describes how this executor will be built. It is useful when
+your executor has non-trivial dependencies or must be run under certain environment.
 
-- If the [bold]Dockerfile[/bold] is missing, Jina automatically generates one for you. 
+- If the [bold]Dockerfile[/bold] is missing, Jina automatically generates one for you.
 - If you provide one, then Jina will respect the given [bold]Dockerfile[/bold].''',
                     title='[Optional] [bold]Dockerfile[/bold]',
                     width=80,
                 )
             )
 
-            is_dockerfile = Confirm.ask(
+            is_dockerfile = self.args.add_dockerfile or Confirm.ask(
                 ':grey_question: Do you need to write your own [bold]Dockerfile[/bold] instead of the auto-generated one?',
                 default=False,
             )
-
             print('[green]That\'s all we need to create an Executor![/green]')
 
         def mustache_repl(srcs):
@@ -182,7 +196,7 @@ your executor has non-trivial dependencies or must be run under certain environm
                         fp.read()
                         .replace('{{exec_name}}', exec_name)
                         .replace('{{exec_description}}', exec_description)
-                        .replace('{{exec_keywords}}', exec_keywords)
+                        .replace('{{exec_keywords}}', str(exec_keywords.split(',')))
                         .replace('{{exec_url}}', exec_url)
                     )
 
@@ -371,8 +385,8 @@ metas:
                     form_data['dockerfile'] = str(dockerfile)
 
                 uuid8, secret = load_secret(work_path)
-                if self.args.force or uuid8:
-                    form_data['force'] = self.args.force or uuid8
+                if self.args.force_update or uuid8:
+                    form_data['force'] = self.args.force_update or uuid8
                 if self.args.secret or secret:
                     form_data['secret'] = self.args.secret or secret
 
@@ -412,7 +426,18 @@ metas:
                 if result is None:
                     raise Exception('Unknown Error')
                 elif not result.get('data', None):
-                    raise Exception(result.get('message', 'Unknown Error'))
+                    msg = result.get('message', 'Unknown Error')
+                    if 'Process(docker) exited on non-zero code' in msg:
+                        self.logger.error(
+                            '''
+                        Failed on building Docker image. Potential solutions:
+                        - If you haven't provide a Dockerfile in the executor bundle, you may want to provide one, 
+                          as the auto-generated one on the cloud did not work.   
+                        - If you have provided a Dockerfile, you may want to check the validity of this Dockerfile.
+                        '''
+                        )
+
+                    raise Exception(msg)
                 elif 200 <= result['statusCode'] < 300:
                     new_uuid8, new_secret = self._prettyprint_result(console, result)
                     if new_uuid8 != uuid8 or new_secret != secret:
@@ -430,8 +455,8 @@ metas:
 
             except Exception as e:  # IO related errors
                 self.logger.error(
-                    f'Error while pushing session_id={req_header["jinameta-session-id"]}: '
-                    f'\n{e!r}'
+                    f'''Please report this session_id: {colored(req_header["jinameta-session-id"], color="yellow", attrs="bold")} to https://github.com/jina-ai/jina/issues'
+                {e!r}'''
                 )
                 raise e
 
@@ -470,7 +495,6 @@ metas:
             width=80,
             expand=False,
         )
-
         console.print(p1)
 
         presented_id = image.get('name', uuid8)
@@ -533,19 +557,22 @@ with f:
     @disk_cache_offline(cache_file=str(_cache_file))
     def fetch_meta(
         name: str,
-        tag: Optional[str] = None,
+        tag: str,
         secret: Optional[str] = None,
         force: bool = False,
     ) -> HubExecutor:
         """Fetch the executor meta info from Jina Hub.
         :param name: the UUID/Name of the executor
-        :param tag: the version tag of the executor
+        :param tag: the tag of the executor if available, otherwise, use `None` as the value
         :param secret: the access secret of the executor
         :param force: if set to True, access to fetch_meta will always pull latest Executor metas, otherwise, default
             to local cache
         :return: meta of executor
-        """
 
+        .. note::
+            The `name` and `tag` should be passed via ``args`` and `force` and `secret` as ``kwargs``, otherwise,
+            cache does not work.
+        """
         with ImportExtensions(required=True):
             import requests
 
@@ -570,7 +597,7 @@ with f:
             uuid=resp['id'],
             name=resp.get('name', None),
             sn=resp.get('sn', None),
-            tag=resp['tag'],
+            tag=tag or resp['tag'],
             visibility=resp['visibility'],
             image_name=resp['image'],
             archive_url=resp['package']['download'],
@@ -621,10 +648,16 @@ with f:
             import docker
             from docker import APIClient
 
+            from .. import __windows__
+
             try:
                 self._client = docker.from_env()
                 # low-level client
-                self._raw_client = APIClient(base_url='unix://var/run/docker.sock')
+                self._raw_client = APIClient(
+                    base_url=docker.constants.DEFAULT_NPIPE
+                    if __windows__
+                    else docker.constants.DEFAULT_UNIX_SOCKET
+                )
             except docker.errors.DockerException:
                 self.logger.critical(
                     f'Docker daemon seems not running. Please run Docker daemon and try again.'
@@ -645,14 +678,13 @@ with f:
         usage_kind = None
 
         try:
-            need_pull = self.args.force
+            need_pull = self.args.force_update
             with console.status(f'Pulling {self.args.uri}...') as st:
                 scheme, name, tag, secret = parse_hub_uri(self.args.uri)
 
                 st.update(f'Fetching [bold]{name}[/bold] from Jina Hub ...')
-                executor = HubIO.fetch_meta(
-                    name, tag=tag, secret=secret, force=need_pull
-                )
+                executor = HubIO.fetch_meta(name, tag, secret=secret, force=need_pull)
+
                 presented_id = getattr(executor, 'name', executor.uuid)
                 executor_name = (
                     f'{presented_id}'
@@ -697,15 +729,23 @@ with f:
                                 raise FileNotFoundError(
                                     f'{pkg_path} need to be upgraded'
                                 )
-                            if self.args.install_requirements:
-                                st.update('Installing [bold]requirements.txt[/bold]...')
-                                requirements_file = pkg_dist_path / 'requirements.txt'
-                                if requirements_file.exists():
-                                    install_requirements(requirements_file)
+
+                            st.update('Installing [bold]requirements.txt[/bold]...')
+                            install_package_dependencies(
+                                install_deps=self.args.install_requirements,
+                                pkg_dist_path=pkg_dist_path,
+                                pkg_path=pkg_dist_path,
+                            )
+
                         except FileNotFoundError:
                             need_pull = True
 
                         if need_pull:
+                            # pull the latest executor meta, as the cached data would expire
+                            executor = HubIO.fetch_meta(
+                                name, tag, secret=secret, force=True
+                            )
+
                             cache_dir = Path(
                                 os.environ.get(
                                     'JINA_HUB_CACHE_DIR',
@@ -737,10 +777,9 @@ with f:
                     raise ValueError(f'{self.args.uri} is not a valid scheme')
         except KeyboardInterrupt:
             executor_name = None
-        except Exception as e:
-            self.logger.error(f'Error while pulling {self.args.uri}: \n{e!r}')
+        except Exception:
             executor_name = None
-            raise e
+            raise
         finally:
             # delete downloaded zip package if existed
             if cached_zip_file is not None:
