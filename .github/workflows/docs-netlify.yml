@@ -14,10 +14,11 @@ jobs:
     steps:
       - run: |
           echo "BRANCH_NAME=${{ github.event.inputs.branch }}" >> $GITHUB_ENV
-      - uses: actions/checkout@v2
-        with:
-          repository: jina-ai/jina
-          ref: ${{ env.BRANCH_NAME }}
+          sudo apt install -y git
+      # - uses: actions/checkout@v2
+      #   with:
+      #     repository: deepankarm/_jina
+      #     ref: ${{ env.BRANCH_NAME }}
       - uses: actions/setup-python@v2
         with:
           python-version: 3.7
@@ -25,11 +26,21 @@ jobs:
         with:
           node-version: '14'
       - run: |
+          echo "hi1"
+          git clone https://github.com/deepankarm/_jina.git
+          echo "hi2"
+          git checkout ${{ env.BRANCH_NAME }}
+          echo "hi3"
           npm i -g netlify-cli
+          echo "hi4"
           python -m pip install --upgrade pip
+          echo "hi5"
           pip install -r requirements.txt
-          bash makedoc.sh
+          echo "hi6"
+          bash makedoc.sh development
+          echo "hi7"
           netlify deploy --dir=_build/dirhtml --alias=${{ env.BRANCH_NAME }} --message="Deploying docs to ${{ env.BRANCH_NAME }} branch"
+          echo "hi8"
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
