@@ -19,6 +19,7 @@ jobs:
 #           repository: jina-ai/jina
       - run: |
           git clone https://github.com/jina-ai/jina.git --branch master --single-branch
+          cd jina
           git fetch origin docs-executor-best-practice-use-executors:docs-executor-best-practice-use-executors feat-star-routing-streamer:feat-star-routing-streamer
           # git clone https://github.com/deepankarm/_jina
           branches=$(git branch -l)
