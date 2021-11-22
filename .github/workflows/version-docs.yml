@@ -29,4 +29,5 @@ jobs:
           done
           # echo $branches
           echo "Well!"
+          git describe --tags $(git rev-list --tags --max-count=20)
           
