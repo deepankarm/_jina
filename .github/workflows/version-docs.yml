@@ -14,10 +14,11 @@ jobs:
     steps:
       - run: |
           echo "BRANCH_NAME=${{ github.event.inputs.branch }}" >> $GITHUB_ENV
-      - uses: actions/checkout@v2
-        with:
-          repository: jina-ai/jina
+#       - uses: actions/checkout@v2
+#         with:
+#           repository: jina-ai/jina
       - run: |
+          git clone https://github.com/deepankarm/_jina
           branches=$(git branch -l)
           echo $branches
           echo "Well!"
