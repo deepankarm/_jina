@@ -164,7 +164,7 @@ ogp_image = 'https://docs.jina.ai/_static/banner.png'
 ogp_use_first_image = True
 ogp_description_length = 300
 ogp_type = 'website'
-ogp_site_name = 'Jina Documentation'
+ogp_site_name = f'Jina {version} Documentation'
 
 ogp_custom_meta_tags = [
     '<meta name="twitter:card" content="summary_large_image">',
@@ -196,7 +196,6 @@ html_context = {
 smv_tag_whitelist = smv_config(os.environ.get('SMV_TAG_WHITELIST', 'v2.4.7'))
 smv_branch_whitelist = smv_config(os.environ.get('SMV_BRANCH_WHITELIST', 'master'))
 smv_remote_whitelist = None
-
 
 def add_server_address(app):
     # This makes variable `server_address` available to docbot.js

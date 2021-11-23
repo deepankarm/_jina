@@ -29,6 +29,7 @@ jobs:
           npm i -g netlify-cli
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          git fetch origin
           bash makedoc.sh development
           netlify deploy --dir=_build/dirhtml --alias=${{ env.BRANCH_NAME }} --message="Deploying docs to ${{ env.BRANCH_NAME }} branch"
           echo "hi8"
