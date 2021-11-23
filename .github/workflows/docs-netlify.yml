@@ -29,18 +29,18 @@ jobs:
           echo "hi1"
           git clone https://github.com/deepankarm/_jina.git
           echo "hi2"
-          git checkout ${{ env.BRANCH_NAME }}
-          echo "hi3"
-          npm i -g netlify-cli
-          echo "hi4"
-          python -m pip install --upgrade pip
-          echo "hi5"
-          pip install -r requirements.txt
-          echo "hi6"
-          bash makedoc.sh development
-          echo "hi7"
-          netlify deploy --dir=_build/dirhtml --alias=${{ env.BRANCH_NAME }} --message="Deploying docs to ${{ env.BRANCH_NAME }} branch"
-          echo "hi8"
+          #git checkout ${{ env.BRANCH_NAME }}
+          #echo "hi3"
+          #npm i -g netlify-cli
+          #echo "hi4"
+          #python -m pip install --upgrade pip
+          #echo "hi5"
+          #pip install -r requirements.txt
+          #echo "hi6"
+          #bash makedoc.sh development
+          #echo "hi7"
+          #netlify deploy --dir=_build/dirhtml --alias=${{ env.BRANCH_NAME }} --message="Deploying docs to ${{ env.BRANCH_NAME }} branch"
+          #echo "hi8"
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
