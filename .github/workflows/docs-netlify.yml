@@ -27,7 +27,7 @@ jobs:
           node-version: '14'
       - run: |
           echo "hi1"
-          git clone https://github.com/deepankarm/_jina.git
+          #git clone https://github.com/deepankarm/_jina.git
           echo "hi2"
           #git checkout ${{ env.BRANCH_NAME }}
           #echo "hi3"
