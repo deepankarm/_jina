@@ -3,7 +3,6 @@
 # set -ex
 
 export NUM_RELEASES=2
-export LATEST_JINA_VERSION='v2.4.7'
 export DEFAULT_BRANCH='master'
 export BUILD_DIR=_build/dirhtml
 
@@ -30,6 +29,9 @@ ARR_SMV_BRANCH_WHITELIST+=" ${DEFAULT_BRANCH}"
 ARR_SMV_TAG_WHITELIST+=" ${LAST_N_TAGS[@]}"
 export SMV_BRANCH_WHITELIST="${ARR_SMV_BRANCH_WHITELIST}"
 export SMV_TAG_WHITELIST="${ARR_SMV_TAG_WHITELIST}"
+
+echo $SMV_BRANCH_WHITELIST
+echo $SMV_TAG_WHITELIST
 
 docker run --rm \
   -v $(pwd)/proto:/out \
