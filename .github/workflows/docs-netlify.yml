@@ -15,9 +15,9 @@ jobs:
       - run: |
           echo "BRANCH_NAME=${{ github.event.inputs.branch }}" >> $GITHUB_ENV
           sudo apt install -y git
-      # - uses: actions/checkout@v2
-      #   with:
-      #     repository: deepankarm/_jina
+      - uses: actions/checkout@v2
+        with:
+          repository: deepankarm/_jina
       #     ref: ${{ env.BRANCH_NAME }}
       - uses: actions/setup-python@v2
         with:
