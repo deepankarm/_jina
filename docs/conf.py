@@ -61,12 +61,9 @@ html_theme_options = {
         "color-brand-primary": "#FBCB67",
         "color-brand-content": "#FBCB67",
     },
-
     # PLEASE DO NOT DELETE the empty line between `start-announce` and `end-announce`
     # PLEASE DO NOT DELETE `start-announce`/ `end-announce` it is used for our dev bot to inject announcement from GH
-
     # start-announce
-
     # end-announce
 }
 
@@ -77,7 +74,11 @@ html_css_files = [
     'docbot.css',
     'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta2/css/all.min.css',
 ]
-html_js_files = ['https://cdn.jsdelivr.net/npm/vue@2/dist/vue.min.js', 'docbot.js', 'iframe.js']
+html_js_files = [
+    'https://cdn.jsdelivr.net/npm/vue@2/dist/vue.min.js',
+    'docbot.js',
+    'iframe.js',
+]
 htmlhelp_basename = slug
 html_show_sourcelink = False
 html_favicon = '_static/favicon.ico'
@@ -113,6 +114,15 @@ extensions = [
 
 myst_enable_extensions = ['colon_fence']
 
+
+def get_notfound_urls_prefix():
+    smv_name = os.environ.get('SPHINX_MULTIVERSION_NAME', version)
+    if smv_name != os.environ.get('LATEST_JINA_VERSION', 'master'):
+        return f'/{smv_name}/'
+    else:
+        return None
+
+
 # -- Custom 404 page
 
 # sphinx-notfound-page
@@ -127,7 +137,7 @@ notfound_context = {
 
 ''',
 }
-notfound_no_urls_prefix = True
+notfound_urls_prefix = get_notfound_urls_prefix()
 
 apidoc_module_dir = repo_dir
 apidoc_output_dir = 'api'
@@ -164,7 +174,9 @@ ogp_image = 'https://docs.jina.ai/_static/banner.png'
 ogp_use_first_image = True
 ogp_description_length = 300
 ogp_type = 'website'
-ogp_site_name = f'Jina {version} Documentation'
+ogp_site_name = (
+    f'Jina {os.environ.get("SPHINX_MULTIVERSION_VERSION", version)} Documentation'
+)
 
 ogp_custom_meta_tags = [
     '<meta name="twitter:card" content="summary_large_image">',
@@ -187,15 +199,16 @@ ogp_custom_meta_tags = [
     ''',
 ]
 
+
 def smv_config(string: str):
     return r'^{}$'.format(string.strip().replace(' ', '|'))
 
-html_context = {
-    'latest_jina_version': os.environ.get('LATEST_JINA_VERSION', 'master')
-}
-smv_tag_whitelist = smv_config(os.environ.get('SMV_TAG_WHITELIST', 'v2.4.7'))
-smv_branch_whitelist = smv_config(os.environ.get('SMV_BRANCH_WHITELIST', 'master'))
+
+html_context = {'latest_jina_version': os.environ.get('LATEST_JINA_VERSION', 'master')}
+smv_tag_whitelist = smv_config(os.environ.get('SMV_TAG_WHITELIST', ''))
+smv_branch_whitelist = smv_config(os.environ.get('SMV_BRANCH_WHITELIST', ''))
 smv_remote_whitelist = None
+
 
 def add_server_address(app):
     # This makes variable `server_address` available to docbot.js
