@@ -31,19 +31,18 @@ jobs:
       - uses: actions/checkout@v2
         with:
           repository: jina-ai/staging-docs
-          path: gh_page
+          path: gh_pages
+          token: ${{ secrets.MY_TOKEN }}
       - uses: actions/setup-python@v2
         with:
           python-version: 3.7
       - name: Build doc and push to jina-ai/staging-docs
         run: |
-          git config --local user.email "dev-bot@jina.ai"
-          git config --local user.name "Jina Dev Bot"
           pip install -r requirements.txt
           pip install furo==2021.10.9
-          
-          python versions.py --docs-path ${{ env.GITHUB_WORKSPACE }}/gh_page --commit
-          # git status
-          # git add docs && git commit -m "chore(docs): update docs due to ${{github.event_name}} on ${{github.repository}}"
-          # git push --force origin gh-pages
+          python versions.py --repodir ${{ github.workspace }} \
+            --docsdir ${{ github.workspace }}/gh_pages --commit
+          ls -la ${{ github.workspace }}/gh_pages
         working-directory: docs
+        env:
+          GITHUB_TOKEN: ${{ secrets.MY_TOKEN }}
