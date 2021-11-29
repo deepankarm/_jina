@@ -1,15 +1,15 @@
 import os
+import sys
 import json
 import shutil
 import logging
 import argparse
 import subprocess
-import sys
 import urllib.request
 from pathlib import Path
-from contextlib import ExitStack
-from typing import Iterable, List, Optional, Union
+from typing import List, Optional, Union
 from tempfile import TemporaryDirectory
+from contextlib import ExitStack, contextmanager
 from packaging.version import InvalidVersion, Version
 
 from bs4 import BeautifulSoup
@@ -29,8 +29,21 @@ def get_logger():
 logger = get_logger()
 
 
+@contextmanager
+def change_cwd(path):
+    curdir = os.getcwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(curdir)
+
+
 class CheckoutBranch(ExitStack):
-    """Checkout a branch or tag in a temporary directory & cd into that"""
+    """
+    Checkout a branch or tag in a temporary directory & cd into that.
+    This assumes that the repo is already cloned.
+    """
 
     def __init__(self, branch_or_tag: str = 'gh-pages') -> None:
         super().__init__()
@@ -46,12 +59,14 @@ class CheckoutBranch(ExitStack):
 
     @staticmethod
     def commit():
-        # TODO
-        pass
+        commit_message = os.getenv(
+            'COMMIT_MESSAGE', 'chore(docs): update docs due to commit'
+        )
+        command = f'git status && git commit -m {commit_message} && git push --force origin main'
+        subprocess.run(command.split(' '))
 
     def __enter__(self):
         self._tmpdir = self.enter_context(TemporaryDirectory())
-        # self._tmpdir = '/tmp/tmp8oh_gwf3'
         self.curdir = os.getcwd()
         logger.info(
             f'Creating a temp worktree for `{self.branch_or_tag}` in {self._tmpdir}'
@@ -119,21 +134,9 @@ os.system('bash makedoc.sh')
 '''
             with open(os.path.join(os.getcwd(), 'exec.py'), 'w') as f:
                 f.write(f_content)
-
-            logger.info(
-                f'writing subprocess logs to {os.path.join(os.getcwd(), "exec.log")}'
-            )
-            with open(os.path.join(os.getcwd(), 'exec.log'), 'w') as log_f:
-                subprocess.run(
-                    ['python', 'exec.py'],
-                    check=True,
-                    executable=sys.executable,
-                    stdout=log_f,
-                    stderr=log_f,
-                )
+            subprocess.run(['python', 'exec.py'], check=True, executable=sys.executable)
         finally:
             os.remove(os.path.join(os.getcwd(), 'exec.py'))
-            # os.remove(os.path.join(os.getcwd(), 'exec.log'))
 
     def build_default_only(self, gh_page_dir):
         VersionManagement.build_versions(
@@ -379,7 +382,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Versions handler')
     parser.add_argument(
         '--local-only',
-        help='Build local changed only, previous versions won\'t show up',
+        help='Build local changed only, previous versions won\'t show up in docs',
         default=False,
         action='store_true',
     )
@@ -417,6 +420,11 @@ if __name__ == '__main__':
         default='_build/dirhtml',
     )
     parser.add_argument(
+        '--docs-path',
+        help='Pass the docs directory path',
+        default=None,
+    )
+    parser.add_argument(
         '--commit',
         help='True if changes to gh_pages branch needs to committed and pushed to remote',
         default=False,
@@ -429,8 +437,19 @@ if __name__ == '__main__':
         manager = VersionManagement(args, docsdir=os.getcwd())
         manager.build_local_only()
     else:
-        with CheckoutBranch('gh-pages') as gh_page:
-            # Inside `gh_page` branch's docs directory
+        if args.docs_path:
+            if os.path.isfile(args.docs_path):
+                raise Exception(
+                    'Invalid docs_path found. Please clone & pass `docs` repo path'
+                )
+            gh_page = change_cwd(args.docs_path)
+        else:
+            gh_page = CheckoutBranch(
+                'gh-pages'
+            )  # TODO: Might change to cloning new repo
+
+        with gh_page:
+            # Inside `docs` repo
             manager = VersionManagement(args, docsdir=gh_page.docsdir)
 
             if args.default_only:
