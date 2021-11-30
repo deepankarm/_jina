@@ -86,17 +86,12 @@ class ClonedDocs(ExitStack):
 
     @staticmethod
     def commit():
-        commands = []
-        # if 'GITHUB_WORKFLOW' in os.environ:
-        #     print(f'\n\n\n\nHurray: {"GITHUB_TOKEN" in os.environ}\n\n\n')
-        #     commands.append(
-        #         f'git remote set-url origin https://deepankarm:{os.environ.get("GITHUB_TOKEN")}@github.com/jina-ai/staging-docs.git'
-        #     )
         commit_message = os.getenv(
             'COMMIT_MESSAGE', 'chore(docs): update docs due to commit'
         )
-        commands.extend(
-            [
+        [
+            subprocess.run(command, shell=True)
+            for command in [
                 'git status',
                 'git config --local user.email "deepankar.mahapatro@jina.ai"',
                 'git config --local user.name "Deepankar Mahapatro"',
@@ -104,8 +99,7 @@ class ClonedDocs(ExitStack):
                 f'git commit -m \"{commit_message}\"',
                 'git push --force origin main',
             ]
-        )
-        [subprocess.run(command, shell=True) for command in commands]
+        ]
 
 
 class VersionManagement:
