@@ -159,7 +159,12 @@ os.system('bash makedoc.sh')
 '''
             with open(os.path.join(os.getcwd(), 'exec.py'), 'w') as f:
                 f.write(f_content)
-            subprocess.run(['python', 'exec.py'], check=True, executable=sys.executable)
+            subprocess.run(
+                ['python', 'exec.py'],
+                check=True,
+                executable=sys.executable,
+                stdout=None,
+            )
         finally:
             os.remove(os.path.join(os.getcwd(), 'exec.py'))
 
@@ -208,20 +213,25 @@ os.system('bash makedoc.sh')
     @staticmethod
     def cleanup_version_directory(gh_page_docs_dir, version):
         """This removes `version` directory from gh_pages worktree, so it can be rebuilt"""
-        shutil.rmtree(os.path.join(gh_page_docs_dir, version), ignore_errors=True)
+        versioned_dir = os.path.join(gh_page_docs_dir, version)
+        logger.info(f'removing {versioned_dir} from {gh_page_docs_dir}')
+        shutil.rmtree(path=versioned_dir, ignore_errors=True)
 
     @staticmethod
     def recreate_version_directory(
         gh_page_docs_dir, tag: CheckoutBranch, version: str, build_dir: str
     ):
         """This recreates `version` directory in gh_pages worktree, so that it can be committed"""
-        shutil.copytree(
-            src=os.path.join(tag.docsdir, build_dir),
-            dst=os.path.join(gh_page_docs_dir, version),
-        )
+        current_build_dir = os.path.join(tag.docsdir, build_dir)
+        versioned_dir = os.path.join(gh_page_docs_dir, version)
+        logger.info(f'Copying {current_build_dir} to {versioned_dir}..')
+        shutil.copytree(src=current_build_dir, dst=versioned_dir)
 
     def move_latest_version_to_root(self):
         version_dir = os.path.join(self.docsdir, self.latest_version)
+        logger.info(
+            f'Moving version {self.latest_version} from {version_dir} to {self.docsdir}'
+        )
         if not os.path.isdir(version_dir):
             logger.warning(
                 f'The latest version {self.latest_version} doesn\'t exist, please build first!'
@@ -229,6 +239,7 @@ os.system('bash makedoc.sh')
             return
         for content in os.listdir(version_dir):
             old_content_path = os.path.join(self.docsdir, content)
+            logger.debug(f'old content path: {old_content_path}')
             if os.path.isfile(old_content_path):
                 os.remove(old_content_path)
             elif os.path.isdir(old_content_path):
@@ -344,12 +355,16 @@ os.system('bash makedoc.sh')
     def _html_update_dropdown(
         html: BeautifulSoup, html_version_dropdown
     ) -> BeautifulSoup:
-        left_side_div = html.find("div", {"class": "sd-text-center"})
-        if left_side_div:
-            left_side_div.contents = list(
-                filter(lambda i: i.name != 'select', left_side_div.contents)
-            )  # remove old 'select's
-            left_side_div.contents.append(html_version_dropdown)
+        left_side_div = html.find("div", {"class": "sd-text-center"}) or html.find(
+            "div", {"class": "sd-d-flex-row"}
+        )
+        if not left_side_div:
+            logger.error('couldn\'t get the left side div, please check ')
+            return
+        left_side_div.contents = list(
+            filter(lambda i: i.name != 'select', left_side_div.contents)
+        )  # remove old 'select's
+        left_side_div.contents.append(html_version_dropdown)
         return html
 
     @staticmethod
@@ -499,13 +514,12 @@ if __name__ == '__main__':
                 manager.update_dropdown_options(manager.args.default_branch_name)
             elif args.latest_only:
                 manager.build_latest_only(args.repodir, gh_page.docsdir)
-                manager.update_dropdown_options(manager.latest_version)
                 manager.move_latest_version_to_root()
+                manager.update_dropdown_options(manager.latest_version)
             else:
                 manager.get_versions_status()
                 manager.build_non_existing_versions(args.repodir, gh_page.docsdir)
-                manager.update_dropdown_options(manager.dropdown_versions_in_order)
                 manager.move_latest_version_to_root()
-
+                manager.update_dropdown_options(manager.dropdown_versions_in_order)
             if args.commit:
                 gh_page.commit()

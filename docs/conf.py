@@ -96,9 +96,9 @@ epub_exclude_files = ['search.html']
 extensions = [
     'sphinx.ext.autodoc',
     'sphinx_autodoc_typehints',
-    # 'sphinx.ext.viewcode',
+    'sphinx.ext.viewcode',
     'sphinx.ext.coverage',
-    # 'sphinxcontrib.apidoc',
+    'sphinxcontrib.apidoc',
     'sphinxarg.ext',
     'sphinx_markdown_tables',
     'sphinx_copybutton',
