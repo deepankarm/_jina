@@ -38,6 +38,7 @@ jobs:
           python-version: 3.7
       - name: Build doc and push to jina-ai/staging-docs
         run: |
+          git checkout -b ${{github.ref }}  # checks out a new branch to avoid `'master' is already checked out at '/home/runner/work/jina/jina'``
           pip install -r requirements.txt
           pip install furo==2021.10.9
           python versions.py --repodir ${{ github.workspace }} \
