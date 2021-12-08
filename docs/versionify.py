@@ -359,7 +359,9 @@ os.system('bash makedoc.sh')
             "div", {"class": "sd-d-flex-row"}
         )
         if not left_side_div:
-            logger.error('couldn\'t get the left side div, please check ')
+            logger.error(
+                f'couldn\'t get the left side div, please check. Here\'s the html\n{html}'
+            )
             return
         new_contents = list(
             filter(lambda i: i.name != 'select', left_side_div.contents)
