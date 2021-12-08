@@ -149,9 +149,9 @@ class VersionManagement:
         ), f'makedoc.sh file doesn\'t exist in current directory {os.getcwd()}'
 
         try:
-            if version in ['v2.5.0', 'v2.4.10', 'v2.4.9']:
+            if version in ['v2.5.3', 'v2.5.2', 'v2.5.1', 'v2.5.0', 'v2.4.10', 'v2.4.9']:
                 f_content = '''import os
-os.system('sphinx-build . _build/dirhtml -b dirhtml') # special case for 2.5.0, 2.4.10 & 2.4.9
+os.system('sphinx-build . _build/dirhtml -b dirhtml') # special case for 2.5.3 -> 2.4.9
 '''
             else:
                 f_content = '''import os
