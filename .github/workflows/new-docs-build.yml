@@ -41,7 +41,7 @@ jobs:
           git checkout -b ${{github.ref }}  # checks out a new branch to avoid `'master' is already checked out at '/home/runner/work/jina/jina'``
           pip install -r requirements.txt
           pip install furo==2021.10.9
-          python versions.py --repodir ${{ github.workspace }} \
+          python versionify.py --repodir ${{ github.workspace }} \
             --docsdir ${{ github.workspace }}/gh_pages --commit
           ls -la ${{ github.workspace }}/gh_pages
         working-directory: docs

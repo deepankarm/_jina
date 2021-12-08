@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from .versions import VersionManagement
+from .versionify import VersionManagement
 
 import pytest
 
