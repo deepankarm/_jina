@@ -361,10 +361,11 @@ os.system('bash makedoc.sh')
         if not left_side_div:
             logger.error('couldn\'t get the left side div, please check ')
             return
-        left_side_div.contents = list(
+        new_contents = list(
             filter(lambda i: i.name != 'select', left_side_div.contents)
         )  # remove old 'select's
-        left_side_div.contents.append(html_version_dropdown)
+        new_contents.append(html_version_dropdown)
+        left_side_div.contents = new_contents
         return html
 
     @staticmethod

@@ -180,7 +180,7 @@ class DocumentArrayMemmap(
         flush: bool = True,
         update_buffer: bool = True,
     ) -> None:
-        value = doc.binary_str()
+        value = bytes(doc)
         l = len(value)  #: the length
         p = int(self._start / _PAGE_SIZE) * _PAGE_SIZE  #: offset of the page
         r = (
@@ -431,7 +431,10 @@ class DocumentArrayMemmap(
         self._last_mmap = None
 
     def __del__(self):
-        self.flush()
+        try:
+            self.flush()
+        except:
+            warnings.warn(f'{self!r} is not correctly flush to disk on deconstruction.')
 
     def prune(self) -> None:
         """Prune deleted Documents from this object, this yields a smaller on-disk storage. """

@@ -1,6 +1,12 @@
 (documentarray)=
 # DocumentArray
 
+```{toctree}
+:hidden:
+
+documentarraymemmap-api
+```
+
 A {class}`~jina.types.arrays.document.DocumentArray` is a list of `Document` objects. You can construct, delete, insert, sort and traverse
 a `DocumentArray` like a Python `list`. It implements all Python List interface. 
 
@@ -135,6 +141,29 @@ d.embedding.shape= (1, 256)
 d.embedding.shape= (1, 256)
 ```
 
+### Bulk access to attributes
+
+{meth}`~jina.types.arrays.mixins.getattr.GetAttributeMixin.get_attributes` let you fetch multiple attributes from the `Document`s in
+one shot:
+
+```{code-block} python
+---
+emphasize-lines: 9
+---
+import numpy as np
+
+from jina import DocumentArray, Document
+
+da = DocumentArray([Document(id=1, text='hello', embedding=np.array([1, 2, 3])),
+                    Document(id=2, text='goodbye', embedding=np.array([4, 5, 6])),
+                    Document(id=3, text='world', embedding=np.array([7, 8, 9]))])
+
+da.get_attributes('id', 'text', 'embedding')
+```
+
+```text
+[('1', '2', '3'), ('hello', 'goodbye', 'world'), (array([1, 2, 3]), array([4, 5, 6]), array([7, 8, 9]))]
+```
 
 
 (embed-via-model)=
@@ -143,6 +172,10 @@ d.embedding.shape= (1, 256)
 ```{important}
 
 {meth}`~jina.types.arrays.mixins.embed.EmbedMixin.embed` function supports both CPU & GPU, which can be specified by its `device` argument.
+```
+
+```{important}
+You can use PyTorch, Keras, ONNX, PaddlePaddle as the embedding model.
 ```
 
 When a `DocumentArray` has `.blobs` set, you can use a deep neural network to {meth}`~jina.types.arrays.mixins.embed.EmbedMixin.embed` it, which means filling `DocumentArray.embeddings`. For example, our `DocumentArray` looks like the following:
@@ -155,7 +188,7 @@ docs = DocumentArray.empty(10)
 docs.blobs = np.random.random([10, 128]).astype(np.float32)
 ```
 
-And our embedding model is a simple MLP in Keras/Pytorch/Paddle:
+And our embedding model is a simple MLP in Pytorch/Keras/ONNX/Paddle:
 
 ````{tab} PyTorch
 
@@ -184,6 +217,33 @@ model = tf.keras.Sequential(
     ]
 )
 
+```
+````
+
+````{tab} ONNX
+
+Preliminary: you need to first export a DNN model to ONNX via API/CLI. 
+For example let's use the PyTorch one:
+
+```python
+data = torch.rand(1, 128)
+
+torch.onnx.export(model, data, 'mlp.onnx', 
+    do_constant_folding=True,  # whether to execute constant folding for optimization
+    input_names=['input'],  # the model's input names
+    output_names=['output'],  # the model's output names
+    dynamic_axes={
+        'input': {0: 'batch_size'},  # variable length axes
+        'output': {0: 'batch_size'},
+    })
+```
+
+Then load it as `InferenceSession`:
+ 
+```python
+import onnxruntime
+
+model = onnxruntime.InferenceSession('mlp.onnx')
 ```
 ````
 
@@ -231,9 +291,13 @@ model = torchvision.models.resnet50(pretrained=True)
 docs.embed(model)
 ```
 
+You can also visualize `.embeddings` using Embedding Projector, {ref}`find more details here<visualize-embeddings>`.
+
+
 ```{hint}
 On large `DocumentArray`, you can set `batch_size` via `.embed(..., batch_size=128)`
 ```
+
 
 (match-documentarray)=
 ## Find nearest neighbours
@@ -733,61 +797,6 @@ DocumentArray([
 
 If you simply want to traverse **all** chunks and matches regardless their levels. You can simply use {meth}`~jina.types.arrays.mixins.traverse.TraverseMixin.flatten`. It will return a `DocumentArray` with all chunks and matches flattened into the top-level, no more nested structure.
 
-## Visualization
-
-`DocumentArray` provides the `.plot_embeddings` function to plot Document embeddings in a 2D graph. `visualize` supports two methods
-to project in 2D space: `pca` and `tsne`.
-
-In the following example, we add three different distributions of embeddings and see three kinds of point clouds in the graph.
-
-```{code-block} python
----
-emphasize-lines: 13
----
-import numpy as np
-from jina import Document, DocumentArray
-
-da = DocumentArray(
-    [
-        Document(embedding=np.random.normal(0, 1, 50)) for _ in range(500)
-    ] + [
-        Document(embedding=np.random.normal(5, 2, 50)) for _ in range(500)
-    ] + [
-        Document(embedding=np.random.normal(2, 5, 50)) for _ in range(500)
-    ]
-)
-da.plot_embeddings()
-
-```
-
-```{figure} document-array-visualize.png
-:align: center
-```
-
-## Persistence
-
-To save all elements in a `DocumentArray` in a JSON line format:
-
-```python
-from jina import DocumentArray, Document
-
-da = DocumentArray([Document(), Document()])
-
-da.save('data.json')
-da1 = DocumentArray.load('data.json')
-```
-
-`DocumentArray` can be also stored in binary format, which is much faster and yields a smaller file:
-
-```python
-from jina import DocumentArray, Document
-
-da = DocumentArray([Document(), Document()])
-
-da.save('data.bin', file_format='binary')
-da1 = DocumentArray.load('data.bin', file_format='binary')
-```
-
 ## Batching
 
 One can batch a large `DocumentArray` into small ones via {func}`~jina.types.arrays.mixins.group.GroupMixin.batch`. This is useful when a `DocumentArray` is too big to process at once. It is particular useful on `DocumentArrayMemmap`, which ensures the data gets loaded on-demand and in a conservative manner.
@@ -807,6 +816,92 @@ for b_da in da.batch(batch_size=256):
 256
 232
 ```
+
+```{tip}
+For processing batches in parallel, please refer to {meth}`~jina.types.arrays.mixins.parallel.ParallelMixin.map_batch`.
+```
+
+## Parallel processing
+
+```{seealso}
+- {meth}`~jina.types.arrays.mixins.parallel.ParallelMixin.map`: to parallel process element by element, return an interator of elements;
+- {meth}`~jina.types.arrays.mixins.parallel.ParallelMixin.map_batch`: to parallel process batch by batch, return an iterator of batches;
+- {meth}`~jina.types.arrays.mixins.parallel.ParallelMixin.apply`: like `.map()`, but return a `DocumentArray`;
+- {meth}`~jina.types.arrays.mixins.parallel.ParallelMixin.apply_batch`: like `.map_batch()`, but return a `DocumentArray`;
+```
+
+Working with large `DocumentArray` element-wise can be time-consuming. The naive way is to run a for-loop and enumerate all `Document` one by one. Jina provides {meth}`~jina.types.arrays.mixins.parallel.ParallelMixin.map` to speed up things quite a lot. It is like Python 
+built-in `map()` function but mapping the function to every element of the `DocumentArray` in parallel. There is also {meth}`~jina.types.arrays.mixins.parallel.ParallelMixin.map_batch` that works on the minibatch level.
+
+
+Let's see an example, where we want to preprocess ~6000 image Documents. First we fill the URI to each Document.
+
+```python
+from jina import DocumentArray
+
+docs = DocumentArray.from_files('*.jpg')  # 6000 image Document with .uri set
+```
+
+To load and preprocess `docs`, we have:
+
+```python
+def foo(d):
+    return (d.load_uri_to_image_blob()
+             .set_image_blob_normalization()
+             .set_image_blob_channel_axis(-1, 0))
+```
+
+This load the image from file into `.blob` do some normalization and set the channel axis. Now, let's compare the time difference when we do things sequentially and use `DocumentArray.map()` with different backends.
+
+````{tab} For-loop
+
+```python
+for d in docs:
+    foo(d)
+```
+````
+
+````{tab} Map with process backend
+
+```python
+for d in docs.map(foo, backend='process'):
+    pass
+```
+````
+
+````{tab} Map with thread backend
+
+```python
+for d in docs.map(foo, backend='thread'):
+    pass
+```
+````
+
+```text
+map-process ...	map-process takes 5 seconds (5.55s)
+map-thread ...	map-thread takes 10 seconds (10.28s)
+foo-loop ...	foo-loop takes 18 seconds (18.52s)
+```
+
+One can see a significant speedup with `.map()`.
+
+```{admonition} When to choose process or thread backend?
+:class: important
+
+It depends on how your `func` in `.map(func)` look like:
+- First, if you want `func` to modify elements inplace, the you can only use `thread` backend. With `process` backend you can only rely on the return values of `.map()`, the modification happens inside `func` is lost.
+- Second, follow what people often suggests: IO-bound `func` uses `thread`, CPU-bound `func` uses `process`.
+```
+
+````{tip}
+If you only modify elements in-place, and do not need return values, you can write:
+
+```python
+da = DocumentArray(...)
+da.apply(func)
+```
+````
+
 
 
 ## Sampling
@@ -875,9 +970,81 @@ rv = da.split(tag='category')
 assert len(rv['c']) == 2  # category `c` is a DocumentArray has 2 Documents
 ```
 
+## Persistence
+
+To save all elements in a `DocumentArray` in a JSON line format:
+
+```python
+from jina import DocumentArray, Document
+
+da = DocumentArray([Document(), Document()])
+
+da.save('data.json')
+da1 = DocumentArray.load('data.json')
+```
+
+`DocumentArray` can be also stored in binary format, which is much faster and yields a smaller file:
+
+```python
+from jina import DocumentArray, Document
+
+da = DocumentArray([Document(), Document()])
+
+da.save('data.bin', file_format='binary')
+da1 = DocumentArray.load('data.bin', file_format='binary')
+```
+
+```{hint}
+For writing to disk on-the-fly, please use {ref}`documentarraymemmap-api`.
+```
 
 
-## Iterate via `itertools`
+## Visualization
+
+If a `DocumentArray` contains all image `Document`, you can plot all images in one sprite image using {meth}`~jina.types.arrays.mixins.plot.PlotMixin.plot_image_sprites`.
+
+```python
+from jina import DocumentArray
+docs = DocumentArray.from_files('*.jpg')
+docs.plot_image_sprites()
+```
+
+```{figure} sprite-image.png
+:width: 60%
+```
+
+(visualize-embeddings)=
+If a `DocumentArray` has valid `.embeddings`, you can visualize the embeddings interactively using {meth}`~jina.types.arrays.mixins.plot.PlotMixin.plot_embeddings`.
+
+````{hint}
+Note that `.plot_embeddings()` applies to any `DocumentArray` not just image ones. For image `DocumentArray`, you can do one step more to attach the image sprite on to the visualization points.
+
+```python
+da.plot_embeddings(image_sprites=True)
+```
+ 
+````
+
+```python
+import numpy as np
+from jina import DocumentArray
+
+docs = DocumentArray.from_files('*.jpg')
+docs.embeddings = np.random.random([len(docs), 256])  # some random embeddings
+
+docs.plot_embeddings(image_sprites=True)
+```
+
+
+```{figure} embedding-projector.gif
+:align: center
+```
+
+## Pythonic list interface
+
+One can see `DocumentArray` as a Python list. Hence, many Python high-level iterator functions/tools can be used on `DocumentArray` as well. 
+
+### Iterate via `itertools`
 
 As `DocumentArray` is an `Iterable`, you can also
 use [Python's built-in `itertools` module](https://docs.python.org/3/library/itertools.html) on it. This enables
@@ -903,41 +1070,7 @@ for key, group in groups:
 ('1', 3)
 ```
 
-
-## Sort
-
-`DocumentArray` is a subclass of `MutableSequence`, therefore you can use Python's built-in `sort` to sort elements in
-a `DocumentArray` object:
-
-```{code-block} python
----
-emphasize-lines: 11
----
-from jina import DocumentArray, Document
-
-da = DocumentArray(
-    [
-        Document(tags={'id': 1}),
-        Document(tags={'id': 2}),
-        Document(tags={'id': 3})
-    ]
-)
-
-da.sort(key=lambda d: d.tags['id'], reverse=True)
-print(da)
-```
-
-To sort elements in `da` in-place, using `tags[id]` value in a descending manner:
-
-```text
-<jina.types.arrays.document.DocumentArray length=3 at 5701440528>
-
-{'id': '6a79982a-b6b0-11eb-8a66-1e008a366d49', 'tags': {'id': 3.0}},
-{'id': '6a799744-b6b0-11eb-8a66-1e008a366d49', 'tags': {'id': 2.0}},
-{'id': '6a799190-b6b0-11eb-8a66-1e008a366d49', 'tags': {'id': 1.0}}
-```
-
-## Filter
+### Filter
 
 You can use Python's [built-in `filter()`](https://docs.python.org/3/library/functions.html#filter) to filter elements
 in a `DocumentArray` object:
@@ -982,40 +1115,35 @@ DocumentArray has 3 items:
 ```
 
 
+### Sort
 
-## Get bulk attributes
-
-`DocumentArray` implements powerful getters that let you fetch multiple attributes from the `Document`s it contains in
-one shot:
+`DocumentArray` is a subclass of `MutableSequence`, therefore you can use Python's built-in `sort` to sort elements in
+a `DocumentArray` object:
 
 ```{code-block} python
 ---
-emphasize-lines: 9
+emphasize-lines: 11
 ---
-import numpy as np
-
 from jina import DocumentArray, Document
 
-da = DocumentArray([Document(id=1, text='hello', embedding=np.array([1, 2, 3])),
-                    Document(id=2, text='goodbye', embedding=np.array([4, 5, 6])),
-                    Document(id=3, text='world', embedding=np.array([7, 8, 9]))])
+da = DocumentArray(
+    [
+        Document(tags={'id': 1}),
+        Document(tags={'id': 2}),
+        Document(tags={'id': 3})
+    ]
+)
 
-da.get_attributes('id', 'text', 'embedding')
+da.sort(key=lambda d: d.tags['id'], reverse=True)
+print(da)
 ```
+
+To sort elements in `da` in-place, using `tags[id]` value in a descending manner:
 
 ```text
-[('1', '2', '3'), ('hello', 'goodbye', 'world'), (array([1, 2, 3]), array([4, 5, 6]), array([7, 8, 9]))]
-```
+<jina.types.arrays.document.DocumentArray length=3 at 5701440528>
 
-This can be very useful when extracting a batch of embeddings:
-
-```python
-import numpy as np
-np.stack(da.get_attributes('embedding'))
-```
-
-```text
-[[1 2 3]
- [4 5 6]
- [7 8 9]]
+{'id': '6a79982a-b6b0-11eb-8a66-1e008a366d49', 'tags': {'id': 3.0}},
+{'id': '6a799744-b6b0-11eb-8a66-1e008a366d49', 'tags': {'id': 2.0}},
+{'id': '6a799190-b6b0-11eb-8a66-1e008a366d49', 'tags': {'id': 1.0}}
 ```
