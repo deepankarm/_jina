@@ -1,10 +1,11 @@
 """Module for helper functions for clients."""
 from typing import Tuple
 
-from ...enums import DataInputType
-from ...excepts import BadDocType, BadRequestType
-from ...types.document import Document
-from ...types.request import Request
+from docarray.document import Document
+
+from jina.enums import DataInputType
+from jina.excepts import BadRequestType
+from jina.types.request.data import DataRequest
 
 
 def _new_data_request_from_batch(
@@ -13,25 +14,19 @@ def _new_data_request_from_batch(
     req = _new_data_request(endpoint, target, parameters)
 
     # add docs, groundtruths fields
-    try:
-        _add_docs_groundtruths(req, batch, data_type, _kwargs)
-    except Exception as ex:
-        raise BadRequestType(
-            f'error when building {req.request_type} from {batch}'
-        ) from ex
+    _add_docs_groundtruths(req, batch, data_type, _kwargs)
 
     return req
 
 
 def _new_data_request(endpoint, target, parameters):
-    req = Request()
-    req = req.as_typed_request('data')
+    req = DataRequest()
 
     # set up header
     if endpoint:
         req.header.exec_endpoint = endpoint
     if target:
-        req.header.target_peapod = target
+        req.header.target_executor = target
     # add parameters field
     if parameters:
         req.parameters = parameters
@@ -51,7 +46,7 @@ def _new_doc_from_data(
         try:
             d = Document(data, **kwargs)
             return d, DataInputType.DOCUMENT
-        except BadDocType:
+        except ValueError:
             # AUTO has a fallback, now reconsider it as content
             if data_type == DataInputType.AUTO:
                 return _build_doc_from_content()
@@ -77,7 +72,7 @@ def _add_docs_groundtruths(req, batch, data_type, _kwargs):
 
 
 def _add_control_propagate(req, kwargs):
-    from ...proto import jina_pb2
+    from jina.proto import jina_pb2
 
     extra_kwargs = kwargs[
         'extra_kwargs'

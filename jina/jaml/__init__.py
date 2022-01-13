@@ -9,12 +9,17 @@ from typing import Dict, Any, Union, TextIO, Optional, List, Tuple
 import yaml
 from yaml.constructor import FullConstructor
 
-from .helper import JinaResolver, JinaLoader, parse_config_source, load_py_modules
+from jina.jaml.helper import (
+    JinaResolver,
+    JinaLoader,
+    parse_config_source,
+    load_py_modules,
+)
 
 __all__ = ['JAML', 'JAMLCompatible']
 
-from ..excepts import BadConfigSource
-from ..helper import expand_env_var
+from jina.excepts import BadConfigSource
+from jina.helper import expand_env_var
 
 subvar_regex = re.compile(
     r'\${{\s*([\w\[\].]+)\s*}}'
@@ -198,7 +203,7 @@ class JAML:
         :param resolve_passes: number of rounds to resolve internal reference.
         :return: expanded dict.
         """
-        from ..helper import parse_arg
+        from jina.helper import parse_arg
 
         expand_map = SimpleNamespace()
         env_map = SimpleNamespace()
@@ -430,7 +435,7 @@ class JAMLCompatible(metaclass=JAMLCompatibleType):
         :param data: the data to serialize
         :return: the node's representation
         """
-        from .parsers import get_parser
+        from jina.jaml.parsers import get_parser
 
         tmp = get_parser(cls, version=data._version).dump(data)
         return representer.represent_mapping('!' + cls.__name__, tmp)
@@ -447,7 +452,7 @@ class JAMLCompatible(metaclass=JAMLCompatibleType):
         :return: the parser associated with the class
         """
         data = constructor.construct_mapping(node, deep=True)
-        from .parsers import get_parser
+        from jina.jaml.parsers import get_parser
 
         return get_parser(cls, version=data.get('version', None)).parse(cls, data)
 
@@ -477,9 +482,9 @@ class JAMLCompatible(metaclass=JAMLCompatibleType):
         allow_py_modules: bool = True,
         substitute: bool = True,
         context: Optional[Dict[str, Any]] = None,
-        override_with: Optional[Dict] = None,
-        override_metas: Optional[Dict] = None,
-        override_requests: Optional[Dict] = None,
+        uses_with: Optional[Dict] = None,
+        uses_metas: Optional[Dict] = None,
+        uses_requests: Optional[Dict] = None,
         extra_search_paths: Optional[List[str]] = None,
         **kwargs,
     ) -> 'JAMLCompatible':
@@ -527,9 +532,9 @@ class JAMLCompatible(metaclass=JAMLCompatibleType):
         :param allow_py_modules: allow importing plugins specified by ``py_modules`` in YAML at any levels
         :param substitute: substitute environment, internal reference and context variables.
         :param context: context replacement variables in a dict, the value of the dict is the replacement.
-        :param override_with: dictionary of parameters to overwrite from the default config's with field
-        :param override_metas: dictionary of parameters to overwrite from the default config's metas field
-        :param override_requests: dictionary of parameters to overwrite from the default config's requests field
+        :param uses_with: dictionary of parameters to overwrite from the default config's with field
+        :param uses_metas: dictionary of parameters to overwrite from the default config's metas field
+        :param uses_requests: dictionary of parameters to overwrite from the default config's requests field
         :param extra_search_paths: extra paths used when looking for executor yaml files
         :param kwargs: kwargs for parse_config_source
         :return: :class:`JAMLCompatible` object
@@ -560,15 +565,15 @@ class JAMLCompatible(metaclass=JAMLCompatibleType):
                         if isinstance(v, dict):
                             _delitem(v, key)
 
-                if override_with is not None:
+                if uses_with is not None:
                     _delitem(no_tag_yml, key='uses_with')
-                if override_metas is not None:
+                if uses_metas is not None:
                     _delitem(no_tag_yml, key='uses_metas')
-                if override_requests is not None:
+                if uses_requests is not None:
                     _delitem(no_tag_yml, key='uses_requests')
-                cls._override_yml_params(no_tag_yml, 'with', override_with)
-                cls._override_yml_params(no_tag_yml, 'metas', override_metas)
-                cls._override_yml_params(no_tag_yml, 'requests', override_requests)
+                cls._override_yml_params(no_tag_yml, 'with', uses_with)
+                cls._override_yml_params(no_tag_yml, 'metas', uses_metas)
+                cls._override_yml_params(no_tag_yml, 'requests', uses_requests)
 
             else:
                 raise BadConfigSource(
@@ -587,7 +592,7 @@ class JAMLCompatible(metaclass=JAMLCompatibleType):
                     else None,
                 )
 
-            from ..flow.base import Flow
+            from jina.flow.base import Flow
 
             if issubclass(cls, Flow):
                 no_tag_yml_copy = copy.copy(no_tag_yml)

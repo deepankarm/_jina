@@ -11,7 +11,7 @@ A {class}`~jina.types.arrays.document.DocumentArray` is a list of `Document` obj
 a `DocumentArray` like a Python `list`. It implements all Python List interface. 
 
 ```{hint}
-We also provide a memory-efficient version of `DocumentArray` coined as {class}`~jina.DocumentArrayMemmap`. It shares *almost* the same API as `DocumentArray`, which means you can easily use it as a drop-in replacement when your data is big. You can {ref}`can find more about here<documentarraymemmap-api>`.
+We also provide a memory-efficient version of `DocumentArray` coined as {class}`~docarray.DocumentArrayMemmap`. It shares *almost* the same API as `DocumentArray`, which means you can easily use it as a drop-in replacement when your data is big. You can {ref}`can find more about here<documentarraymemmap-api>`.
 ```
 
 ## Construct
@@ -63,7 +63,7 @@ da = DocumentArray.from_ndarray(...)
 
 ## Access elements
 
-You can access a `Document` element in the `DocumentArray` via integer index, string `id` or `slice` indices:
+Like a `List` *and* a `Dict`, elements in `DocumentArray` can be accessed via integer index, string `id` or `slice` indices:
 
 ```python
 from jina import DocumentArray, Document
@@ -71,14 +71,14 @@ from jina import DocumentArray, Document
 da = DocumentArray([Document(id='hello'), Document(id='world'), Document(id='goodbye')])
 
 da[0]
-da['world']
 da[1:2]
+da['world']
 ```
 
 ```text
 <jina.types.document.Document id=hello at 5699749904>
-<jina.types.document.Document id=world at 5736614992>
 <jina.types.arrays.document.DocumentArray length=1 at 5705863632>
+<jina.types.document.Document id=world at 5736614992>
 ```
 
 ```{tip}
@@ -163,6 +163,59 @@ da.get_attributes('id', 'text', 'embedding')
 
 ```text
 [('1', '2', '3'), ('hello', 'goodbye', 'world'), (array([1, 2, 3]), array([4, 5, 6]), array([7, 8, 9]))]
+```
+
+
+## Import/Export
+
+`DocumentArray` provides the following methods for importing from/exporting to different formats.
+
+| Description                       | Export Method                                                       | Import Method                                 |
+|-----------------------------------|---------------------------------------------------------------------|-----------------------------------------------|
+| LZ4-compressed binary string/file | `.to_bytes()` (or `bytes(...)` for more Pythonic), `.save_binary()` | `.load_binary()`                              |
+| JSON string/file                  | `.to_json()`, `.save_json()`                                        | `.load_json()`, `.from_ndjson()`              |
+| CSV file                          | `.save_csv()`                                                       | `.load_csv()`, `.from_lines()`, `.from_csv()` |
+| `pandas.Dataframe` object         | `.to_dataframe()`                                                   | `.from_dataframe()`                           |
+| Local files                       |                                                                     | `.from_files()`                               |
+| `numpy.ndarray` object            |                                                                     | `.from_ndarray()`                             |
+| Jina Cloud Storage (experimental) | `.push()`                                                           | `.pull()`                                     |
+
+```{seealso}
+`.from_*()` functions often utlizes generators. When using independently, can be more memory-efficient. See {mod}`~jina.types.document.generators`.   
+```
+
+### Sharing DocumentArray across machines
+
+```{caution}
+This is an experimental feature introduced in Jina `2.5.4`. The behavior of this feature might change in the future. 
+```
+
+Since Jina `2.5.4` we introduce a new IO feature: {meth}`~jina.types.arrays.mixins.io.pushpull.PushPullMixin.push` and {meth}`~jina.types.arrays.mixins.io.pushpull.PushPullMixin.pull`, 
+which allows you to share a DocumentArray object across machines.
+
+Consider you are working on a GPU machine via Google Colab/Jupyter. After preprocessing and embedding, you got everything you need in a DocumentArray. You can easily transfer it to the local laptop via:
+
+```python
+from jina import DocumentArray
+
+da = DocumentArray(...)  # heavylifting, processing, GPU task, ...
+da.push(token='myda123')
+```
+
+Then on your local laptop, simply
+
+```python
+from jina import DocumentArray
+
+da = DocumentArray.pull(token='myda123')
+```
+
+Now you can continue the work at local, analyzing `da` or visualizing it. Your friends & colleagues who know the token `myda123` can also pull that DocumentArray. It's useful when you want to quickly share the results with your colleagues & friends.
+
+For more information of this feature, please refer to {class}`~jina.types.arrays.mixins.io.pushpull.PushPullMixin`.
+
+```{danger}
+The lifetime of the storage is not promised at the moment: could be a day, could be a week. Do not use it for persistence in production. Only consider this as temporary transmission or a clipboard.
 ```
 
 
@@ -426,7 +479,7 @@ match emb =   (0, 0)	1.0
 
 ### Keep only ID
 
-Default `A.match(B)` will copy the top-K matched Documents from B to `A.matches`. When these matches are big, copying them can be time-consuming. In this case, one can leverage `.match(..., only_id=True)` to keep only {attr}`~jina.Document.id`:
+Default `A.match(B)` will copy the top-K matched Documents from B to `A.matches`. When these matches are big, copying them can be time-consuming. In this case, one can leverage `.match(..., only_id=True)` to keep only {attr}`~docarray.Document.id`:
 
 ```python
 from jina import DocumentArray
@@ -588,7 +641,7 @@ And then in just use `.match(da)`.
 
 ### Evaluate matches
 
-You can easily evaluate the performance of matches via {func}`~jina.types.arrays.mixins.evaluation.EvaluationMixin.evaluate`, provide that you have the groundtruth of the matches.
+You can easily evaluate the performance of matches via {func}`~jina.types.arrays.mixins.evaluation.EvaluationMixin.evaluate`, provided that you have the ground truth of the matches.
 
 Jina provides some common metrics used in the information retrieval community that allows one to evaluate the nearest-neighbour matches. These metrics include: precision, recall, R-precision, hit rate, NDCG, etc. The full list of functions can be found in {class}`~jina.math.evaluation`.
 
@@ -603,7 +656,7 @@ da.embeddings = np.random.random([10, 3])
 da.match(da, exclude_self=True)
 ```
 
-Now `da.matches` contains the matches. Let's use it as the groundtruth. Now let's create imperfect matches by mixing in ten "noise Documents" to every `d.matches`.
+Now `da.matches` contains the matches. Let's use it as the ground truth. Now let's create imperfect matches by mixing in ten "noise Documents" to every `d.matches`.
 
 ```python
 da2 = copy.deepcopy(da)
@@ -620,7 +673,7 @@ Now we should have the average Precision@10 close to 0.5.
 0.5399999999999999
 ```
 
-Note that this value is an average number over all Documents of `da2`. If you want to look at the individual evaluation, you can check {attr}`~jina.Document.evaluations` attribute, e.g.
+Note that this value is an average number over all Documents of `da2`. If you want to look at the individual evaluation, you can check {attr}`~docarray.Document.evaluations` attribute, e.g.
 
 ```python
 for d in da2:
@@ -640,7 +693,7 @@ for d in da2:
 0.30000001192092896
 ```
 
-Note that `evaluate()` works only when two `DocumentArray` have the same length and their Documents are aligned by a hash function. The default hash function simply uses {attr}`~jina.Document.id`. You can specify your own hash function.
+Note that `evaluate()` works only when two `DocumentArray` have the same length and their Documents are aligned by a hash function. The default hash function simply uses {attr}`~docarray.Document.id`. You can specify your own hash function.
 
 (traverse-doc)=
 ## Traverse nested elements
@@ -902,6 +955,46 @@ da.apply(func)
 ```
 ````
 
+## Visualization
+
+If a `DocumentArray` contains all image `Document`, you can plot all images in one sprite image using {meth}`~jina.types.arrays.mixins.plot.PlotMixin.plot_image_sprites`.
+
+```python
+from jina import DocumentArray
+docs = DocumentArray.from_files('*.jpg')
+docs.plot_image_sprites()
+```
+
+```{figure} sprite-image.png
+:width: 60%
+```
+
+(visualize-embeddings)=
+If a `DocumentArray` has valid `.embeddings`, you can visualize the embeddings interactively using {meth}`~jina.types.arrays.mixins.plot.PlotMixin.plot_embeddings`.
+
+````{hint}
+Note that `.plot_embeddings()` applies to any `DocumentArray` not just image ones. For image `DocumentArray`, you can do one step more to attach the image sprite on to the visualization points.
+
+```python
+da.plot_embeddings(image_sprites=True)
+```
+ 
+````
+
+```python
+import numpy as np
+from jina import DocumentArray
+
+docs = DocumentArray.from_files('*.jpg')
+docs.embeddings = np.random.random([len(docs), 256])  # some random embeddings
+
+docs.plot_embeddings(image_sprites=True)
+```
+
+
+```{figure} embedding-projector.gif
+:align: center
+```
 
 
 ## Sampling
@@ -970,75 +1063,6 @@ rv = da.split(tag='category')
 assert len(rv['c']) == 2  # category `c` is a DocumentArray has 2 Documents
 ```
 
-## Persistence
-
-To save all elements in a `DocumentArray` in a JSON line format:
-
-```python
-from jina import DocumentArray, Document
-
-da = DocumentArray([Document(), Document()])
-
-da.save('data.json')
-da1 = DocumentArray.load('data.json')
-```
-
-`DocumentArray` can be also stored in binary format, which is much faster and yields a smaller file:
-
-```python
-from jina import DocumentArray, Document
-
-da = DocumentArray([Document(), Document()])
-
-da.save('data.bin', file_format='binary')
-da1 = DocumentArray.load('data.bin', file_format='binary')
-```
-
-```{hint}
-For writing to disk on-the-fly, please use {ref}`documentarraymemmap-api`.
-```
-
-
-## Visualization
-
-If a `DocumentArray` contains all image `Document`, you can plot all images in one sprite image using {meth}`~jina.types.arrays.mixins.plot.PlotMixin.plot_image_sprites`.
-
-```python
-from jina import DocumentArray
-docs = DocumentArray.from_files('*.jpg')
-docs.plot_image_sprites()
-```
-
-```{figure} sprite-image.png
-:width: 60%
-```
-
-(visualize-embeddings)=
-If a `DocumentArray` has valid `.embeddings`, you can visualize the embeddings interactively using {meth}`~jina.types.arrays.mixins.plot.PlotMixin.plot_embeddings`.
-
-````{hint}
-Note that `.plot_embeddings()` applies to any `DocumentArray` not just image ones. For image `DocumentArray`, you can do one step more to attach the image sprite on to the visualization points.
-
-```python
-da.plot_embeddings(image_sprites=True)
-```
- 
-````
-
-```python
-import numpy as np
-from jina import DocumentArray
-
-docs = DocumentArray.from_files('*.jpg')
-docs.embeddings = np.random.random([len(docs), 256])  # some random embeddings
-
-docs.plot_embeddings(image_sprites=True)
-```
-
-
-```{figure} embedding-projector.gif
-:align: center
-```
 
 ## Pythonic list interface
 

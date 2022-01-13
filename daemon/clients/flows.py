@@ -3,10 +3,10 @@ from typing import Union, TYPE_CHECKING, Dict, Optional
 
 import aiohttp
 
-from ..models.id import daemonize
-from ..helper import if_alive, error_msg_from
-from .base import AsyncBaseClient
-from .mixin import AsyncToSyncMixin
+from daemon.models.id import daemonize
+from daemon.helper import if_alive, error_msg_from
+from daemon.clients.base import AsyncBaseClient
+from daemon.clients.mixin import AsyncToSyncMixin
 
 if TYPE_CHECKING:
     from ..models import DaemonID
@@ -76,23 +76,15 @@ class AsyncFlowClient(AsyncBaseClient):
         self,
         id: Union[str, 'DaemonID'],
         pod_name: str,
-        dump_path: Optional[str] = None,
-        *,
         uses_with: Optional[Dict] = None,
     ) -> str:
         """Perform `rolling_update` on a remote Flow
 
         :param id: flow id
         :param pod_name: pod name for rolling update
-        :param dump_path: path of dump from other flow
         :param uses_with: the uses with to override the Executors params
         :return: flow id
         """
-        if dump_path is not None:
-            if uses_with is not None:
-                uses_with['dump_path'] = dump_path
-            else:
-                uses_with = {'dump_path': dump_path}
         async with aiohttp.request(
             method='PUT',
             url=f'{self.store_api}/rolling_update/{daemonize(id, self._kind)}',

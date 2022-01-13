@@ -1,5 +1,6 @@
 import asyncio
 import functools
+import inspect
 import json
 import math
 import os
@@ -11,10 +12,12 @@ import time
 import uuid
 import warnings
 from argparse import ArgumentParser, Namespace
+from collections.abc import MutableMapping
 from datetime import datetime
 from itertools import islice
 from types import SimpleNamespace
 from typing import (
+    Callable,
     Tuple,
     Optional,
     Iterator,
@@ -29,7 +32,7 @@ from typing import (
     TYPE_CHECKING,
 )
 
-from . import __windows__
+from jina import __windows__
 
 __all__ = [
     'batch_iterator',
@@ -56,6 +59,10 @@ __all__ = [
     'T',
 ]
 
+
+if TYPE_CHECKING:
+    from docarray import DocumentArray
+
 T = TypeVar('T')
 
 
@@ -73,7 +80,7 @@ def deprecated_alias(**aliases):
     :param aliases: maps aliases to new arguments
     :return: wrapper
     """
-    from .excepts import NotSupportedError
+    from jina.excepts import NotSupportedError
 
     def _rename_kwargs(func_name: str, kwargs, aliases):
         """
@@ -396,6 +403,9 @@ def random_name() -> str:
     return '_'.join(random.choice(_random_names[j]) for j in range(2))
 
 
+assigned_ports = set()
+
+
 def random_port() -> Optional[int]:
     """
     Get a random available port number from '49153' to '65535'.
@@ -411,13 +421,18 @@ def random_port() -> Optional[int]:
     def _get_port(port=0):
         with multiprocessing.Lock():
             with threading.Lock():
-                with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
-                    try:
-                        s.bind(('', port))
-                        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                        return s.getsockname()[1]
-                    except OSError:
-                        pass
+                if port not in assigned_ports:
+                    with closing(
+                        socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    ) as s:
+                        try:
+                            s.bind(('', port))
+                            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                            return s.getsockname()[1]
+                        except OSError:
+                            pass
+                else:
+                    return None
 
     _port = None
     if 'JINA_RANDOM_PORT_MIN' in os.environ or 'JINA_RANDOM_PORT_MAX' in os.environ:
@@ -435,6 +450,7 @@ def random_port() -> Optional[int]:
     else:
         _port = _get_port()
 
+    assigned_ports.add(int(_port))
     return int(_port)
 
 
@@ -675,7 +691,7 @@ def warn_unknown_args(unknown_args: List[str]):
     warn_strs = []
     for arg in unknown_args:
         if arg.replace('--', '') not in all_args:
-            from .parsers.deprecated import get_deprecated_replacement
+            from jina.parsers.deprecated import get_deprecated_replacement
 
             new_arg = get_deprecated_replacement(arg)
             if new_arg:
@@ -702,7 +718,7 @@ class ArgNamespace:
         :return: argument list
         """
         args = []
-        from .executors import BaseExecutor
+        from jina.executors import BaseExecutor
 
         for k, v in kwargs.items():
             k = k.replace('_', '-')
@@ -808,7 +824,7 @@ def is_valid_local_config_source(path: str) -> bool:
     :return: True if the path is valid else False.
     """
     try:
-        from .jaml import parse_config_source
+        from jina.jaml import parse_config_source
 
         parse_config_source(path)
         return True
@@ -822,10 +838,11 @@ def get_full_version() -> Optional[Tuple[Dict, Dict]]:
 
     :return: Version information and environment variables
     """
-    import os, grpc, zmq, numpy, google.protobuf, yaml, platform
-    from . import (
+    import os, grpc, google.protobuf, yaml, platform
+    from jina import (
         __version__,
         __proto_version__,
+        __docarray_version__,
         __jina_env__,
         __uptime__,
         __unset_msg__,
@@ -839,10 +856,9 @@ def get_full_version() -> Optional[Tuple[Dict, Dict]]:
 
         info = {
             'jina': __version__,
+            'docarray': __docarray_version__,
             'jina-proto': __proto_version__,
             'jina-vcs-tag': os.environ.get('JINA_VCS_VERSION', __unset_msg__),
-            'libzmq': zmq.zmq_version(),
-            'pyzmq': numpy.__version__,
             'protobuf': google.protobuf.__version__,
             'proto-backend': api_implementation._default_implementation_type,
             'grpcio': getattr(grpc, '__version__', _grpcio_metadata.__version__),
@@ -1160,6 +1176,16 @@ def is_jupyter() -> bool:  # pragma: no cover
         return False  # Other type (?)
 
 
+def iscoroutinefunction(func: Callable):
+    return inspect.iscoroutinefunction(func)
+
+
+async def run_in_threadpool(func: Callable, executor=None, *args, **kwargs):
+    return await get_or_reuse_loop().run_in_executor(
+        executor, functools.partial(func, *args, **kwargs)
+    )
+
+
 def run_async(func, *args, **kwargs):
     """Generalized asyncio.run for jupyter notebook.
 
@@ -1202,7 +1228,7 @@ def run_async(func, *args, **kwargs):
             try:
                 return thread.result
             except AttributeError:
-                from .excepts import BadClient
+                from jina.excepts import BadClient
 
                 raise BadClient(
                     'something wrong when running the eventloop, result can not be retrieved'
@@ -1216,7 +1242,7 @@ def run_async(func, *args, **kwargs):
                 'please report this issue here: https://github.com/jina-ai/jina'
             )
     else:
-        return asyncio.run(func(*args, **kwargs))
+        return get_or_reuse_loop().run_until_complete(func(*args, **kwargs))
 
 
 def slugify(value):
@@ -1272,7 +1298,7 @@ def find_request_binding(target):
     :return: a dictionary with key as request type and value as method name
     """
     import ast, inspect
-    from . import __default_endpoint__
+    from jina import __default_endpoint__
 
     res = {}
 
@@ -1324,12 +1350,10 @@ def dunder_get(_dict: Any, key: str) -> Any:
 
     from google.protobuf.struct_pb2 import ListValue
     from google.protobuf.struct_pb2 import Struct
-    from google.protobuf.pyext._message import MessageMapContainer
-    from .types.struct import StructView
 
     if isinstance(part1, int):
         result = _dict[part1]
-    elif isinstance(_dict, (dict, Struct, MessageMapContainer, StructView)):
+    elif isinstance(_dict, (dict, Struct, MutableMapping)):
         if part1 in _dict:
             result = _dict[part1]
         else:
@@ -1397,3 +1421,17 @@ def deprecate_by(new_fn):
         return new_fn(*args, **kwargs)
 
     return _f
+
+
+def get_request_header() -> Dict:
+    """Return the header of request.
+
+    :return: request header
+    """
+    metas, envs = get_full_version()
+
+    header = {
+        **{f'jinameta-{k}': str(v) for k, v in metas.items()},
+        **envs,
+    }
+    return header

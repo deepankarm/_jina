@@ -64,6 +64,11 @@ html_theme_options = {
     # PLEASE DO NOT DELETE the empty line between `start-announce` and `end-announce`
     # PLEASE DO NOT DELETE `start-announce`/ `end-announce` it is used for our dev bot to inject announcement from GH
     # start-announce
+
+    "announcement": '''
+    <a href="https://www.meetup.com/jina-community-meetup/events/279857968/">🚀 Learn more about RocketQA and building a multimodal fashion search at our Engineering All Hands on 11th Jan, 4 PM CET  ✨</a>
+    ''',
+        
     # end-announce
 }
 
@@ -74,11 +79,7 @@ html_css_files = [
     'docbot.css',
     'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta2/css/all.min.css',
 ]
-html_js_files = [
-    'https://cdn.jsdelivr.net/npm/vue@2/dist/vue.min.js',
-    'docbot.js',
-    'iframe.js',
-]
+html_js_files = []
 htmlhelp_basename = slug
 html_show_sourcelink = False
 html_favicon = '_static/favicon.ico'
@@ -109,7 +110,6 @@ extensions = [
     'myst_parser',
     'sphinx_design',
     'sphinx_inline_tabs',
-    'sphinx_multiversion',
 ]
 
 myst_enable_extensions = ['colon_fence']
@@ -137,7 +137,7 @@ notfound_context = {
 
 ''',
 }
-notfound_urls_prefix = get_notfound_urls_prefix()
+notfound_no_urls_prefix = True
 
 apidoc_module_dir = repo_dir
 apidoc_output_dir = 'api'
@@ -196,6 +196,7 @@ ogp_custom_meta_tags = [
 </script>
 
 <script async defer src="https://buttons.github.io/buttons.js"></script>
+<script async defer src="https://cdn.jsdelivr.net/npm/qabot@0.2"></script>
     ''',
 ]
 
@@ -210,10 +211,14 @@ smv_branch_whitelist = smv_config(os.environ.get('SMV_BRANCH_WHITELIST', ''))
 smv_remote_whitelist = None
 
 
-def add_server_address(app):
-    # This makes variable `server_address` available to docbot.js
+def set_qa_server_address(app):
+    # This sets the server address to <qa-bot>
     server_address = app.config['server_address']
-    js_text = "var server_address = '%s';" % server_address
+    js_text = """
+        document.addEventListener("DOMContentLoaded", function() { 
+            document.querySelector("qa-bot").setAttribute("server", "%s");
+        });
+        """ % server_address
     app.add_js_file(None, body=js_text)
 
 
@@ -248,4 +253,4 @@ def setup(app):
         default=os.getenv('JINA_DOCSBOT_SERVER', 'https://docsbot.jina.ai'),
         rebuild='',
     )
-    app.connect('builder-inited', add_server_address)
+    app.connect('builder-inited', set_qa_server_address)

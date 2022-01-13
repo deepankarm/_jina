@@ -8,20 +8,14 @@ from google.protobuf.descriptor import Descriptor, FieldDescriptor
 from google.protobuf.pyext.cpp_message import GeneratedProtocolMessageType
 from pydantic import Field, BaseModel, BaseConfig, create_model, root_validator
 
-from ..... import DocumentArray
-from .....proto.jina_pb2 import (
+from jina.proto.jina_pb2 import RouteProto, StatusProto, DataRequestProto
+from docarray.proto.docarray_pb2 import (
     DenseNdArrayProto,
     NdArrayProto,
     SparseNdArrayProto,
     NamedScoreProto,
     DocumentProto,
-    RouteProto,
-    EnvelopeProto,
-    StatusProto,
-    MessageProto,
-    RequestProto,
 )
-from .....types.document import Document
 
 PROTO_TO_PYDANTIC_MODELS = SimpleNamespace()
 PROTOBUF_TO_PYTHON_TYPE = {
@@ -235,10 +229,8 @@ for proto in (
     SparseNdArrayProto,
     DocumentProto,
     RouteProto,
-    EnvelopeProto,
     StatusProto,
-    MessageProto,
-    RequestProto,
+    DataRequestProto,
 ):
     protobuf_to_pydantic_model(proto)
 
@@ -263,6 +255,8 @@ class JinaStatusModel(BaseModel):
 
 
 def _get_example_data():
+    from jina import DocumentArray, Document
+
     return DocumentArray([Document(text='hello, world!')]).to_list()
 
 
@@ -283,7 +277,7 @@ class JinaRequestModel(BaseModel):
         example=_get_example_data(),
         description='Data to send, a list of dict/string/bytes that can be converted into a list of `Document` objects',
     )
-    target_peapod: Optional[str] = Field(
+    target_executor: Optional[str] = Field(
         None,
         example='',
         description='A regex string represent the certain peas/pods request targeted.',
@@ -304,16 +298,27 @@ class JinaResponseModel(BaseModel):
     Jina HTTP Response model. Only `request_id` and `data` are preserved.
     """
 
-    class DataRequestModel(BaseModel):
+    class DataContentModel(BaseModel):
         docs: Optional[List[Dict[str, Any]]] = None
         groundtruths: Optional[List[Dict[str, Any]]] = None
 
-    request_id: str = Field(
-        ...,
-        example='b5110ed9-1954-4a3d-9180-0795a1e0d7d8',
-        description='The ID given by Jina service',
-    )
-    data: Optional[DataRequestModel] = Field(None, description='Returned Documents')
+        class Config:
+            alias_generator = _to_camel_case
+            allow_population_by_field_name = True
+
+    class HeaderModel(BaseModel):
+        request_id: str = Field(
+            ...,
+            example='b5110ed9-1954-4a3d-9180-0795a1e0d7d8',
+            description='The ID given by Jina service',
+        )
+
+        class Config:
+            alias_generator = _to_camel_case
+            allow_population_by_field_name = True
+
+    header: HeaderModel = None
+    data: Optional[DataContentModel] = Field(None, description='Returned Documents')
 
     class Config:
         alias_generator = _to_camel_case

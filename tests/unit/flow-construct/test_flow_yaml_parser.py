@@ -11,7 +11,7 @@ from jina.jaml import JAML
 from jina.enums import GatewayProtocolType
 from jina.jaml.parsers import get_supported_versions
 from jina.parsers.flow import set_flow_parser
-from jina.types.document.generators import from_ndarray
+from docarray.document.generators import from_ndarray
 
 cur_dir = Path(__file__).parent
 
@@ -50,12 +50,12 @@ def test_add_needs_inspect(tmpdir):
     )
     with f1:
         _ = f1.index(from_ndarray(np.random.random([5, 5])), return_results=True)
-    f2 = Flow.load_config('yaml/flow-v1.0-syntax.yml')
+        f2 = Flow.load_config('yaml/flow-v1.0-syntax.yml')
 
-    with f2:
-        _ = f2.index(from_ndarray(np.random.random([5, 5])), return_results=True)
+        with f2:
+            _ = f2.index(from_ndarray(np.random.random([5, 5])), return_results=True)
 
-    assert f1 == f2
+            assert f1 == f2
 
 
 def test_load_dump_load(tmpdir):
@@ -76,14 +76,12 @@ def test_load_modify_dump_load(tmpdir):
     assert f._pod_nodes['custom1'].args.uses == 'jinahub://CustomExecutor1'
     assert f._pod_nodes['custom2'].args.uses == 'CustomExecutor2'
     assert f._pod_nodes['custom2'].args.port_in == 23456
-    assert f._pod_nodes['custom2'].args.port_out == 34567
 
     # change args inside `with`
     f.port_expose = 12346
     f.protocol = GatewayProtocolType.WEBSOCKET
     # change executor args
     f._pod_nodes['custom2'].args.port_in = 23457
-    f._pod_nodes['custom2'].args.port_out = 34568
 
     f.save_config(str(Path(tmpdir) / 'a0.yml'))
     f1: Flow = Flow.load_config(str(Path(tmpdir) / 'a0.yml'))
@@ -98,7 +96,6 @@ def test_load_modify_dump_load(tmpdir):
     assert f1.port_expose == 12346
     assert f1.protocol == GatewayProtocolType.WEBSOCKET
     assert f1._pod_nodes['custom2'].args.port_in == 23457
-    assert f1._pod_nodes['custom2'].args.port_out == 34568
 
 
 def test_dump_load_build(monkeypatch):
@@ -121,14 +118,8 @@ def test_dump_load_build(monkeypatch):
           shards: 2
     '''
     ).build()
-    f['gateway'].args.runs_in_docker = True
-    f['executor1'].args.runs_in_docker = True
 
     f1: Flow = Flow.load_config(JAML.dump(f)).build()
-    assert not f1[
-        'gateway'
-    ].args.runs_in_docker  # gateway doesn't have custom args set, as env was not set
-    assert f1['executor1'].args.runs_in_docker
     # these were passed by the user
     assert f.port_expose == f1.port_expose
     assert f.protocol == f1.protocol
@@ -136,21 +127,15 @@ def test_dump_load_build(monkeypatch):
     assert f['executor2'].args.host == f1['executor2'].args.host
     # this was set during `load_config`
     assert f['executor2'].args.port_in == f1['executor2'].args.port_in
-    assert f['executor3'].args.port_out == f1['executor3'].args.port_out
     # gateway args are not set, if `JINA_FULL_CLI` is not set
     assert f['gateway'].args.port_in != f1['gateway'].args.port_in
-    assert f['gateway'].args.port_out != f1['gateway'].args.port_out
 
     monkeypatch.setenv('JINA_FULL_CLI', 'true')
     f2: Flow = Flow.load_config(JAML.dump(f)).build()
-    assert f2['gateway'].args.runs_in_docker
-    assert f2['executor1'].args.runs_in_docker
     # these were passed by the user
     assert f.port_expose == f2.port_expose
     # validate gateway args (set during build)
     assert f['gateway'].args.port_in == f2['gateway'].args.port_in
-    assert f['gateway'].args.port_out == f2['gateway'].args.port_out
-    assert f['gateway'].args.port_ctrl == f2['gateway'].args.port_ctrl
 
 
 def test_load_flow_with_port():
@@ -210,7 +195,7 @@ def test_flow_yaml_override_with_protocol():
     path = os.path.join(cur_dir.parent, 'yaml/examples/faiss/flow-index.yml')
     f1 = Flow.load_config(path)
     assert f1.protocol == GatewayProtocolType.GRPC
-    f2 = Flow.load_config(path, override_with={'protocol': 'http'})
+    f2 = Flow.load_config(path, uses_with={'protocol': 'http'})
     assert f2.protocol == GatewayProtocolType.HTTP
-    f3 = Flow.load_config(path, override_with={'protocol': 'websocket'})
+    f3 = Flow.load_config(path, uses_with={'protocol': 'websocket'})
     assert f3.protocol == GatewayProtocolType.WEBSOCKET

@@ -1,25 +1,33 @@
 import argparse
-import inspect
 import json
-from typing import Dict
+from typing import Dict, TYPE_CHECKING
 
 from google.protobuf.json_format import MessageToDict
 
-from ....grpc import Grpclet
-from ....zmq import AsyncZmqlet
-from ..... import __version__
-from .....clients.request import request_generator
-from .....helper import get_full_version
-from .....importer import ImportExtensions
-from .....logging.logger import JinaLogger
-from .....logging.profile import used_memory_readable
+from jina import __version__
+from jina.clients.request import request_generator
+from jina.helper import get_full_version
+from jina.importer import ImportExtensions
+from jina.logging.logger import JinaLogger
+from jina.logging.profile import used_memory_readable
+
+if TYPE_CHECKING:
+    from jina.peapods.runtimes.gateway.graph.topology_graph import TopologyGraph
+    from jina.peapods.networking import GrpcConnectionPool
 
 
-def get_fastapi_app(args: 'argparse.Namespace', logger: 'JinaLogger'):
+def get_fastapi_app(
+    args: 'argparse.Namespace',
+    topology_graph: 'TopologyGraph',
+    connection_pool: 'GrpcConnectionPool',
+    logger: 'JinaLogger',
+):
     """
     Get the app from FastAPI as the REST interface.
 
     :param args: passed arguments.
+    :param topology_graph: topology graph that manages the logic of sending to the proper executors.
+    :param connection_pool: Connection Pool to handle multiple replicas and sending to different of them
     :param logger: Jina logger.
     :return: fastapi app
     """
@@ -28,7 +36,7 @@ def get_fastapi_app(args: 'argparse.Namespace', logger: 'JinaLogger'):
         from starlette.requests import Request
         from fastapi.responses import HTMLResponse
         from fastapi.middleware.cors import CORSMiddleware
-        from .models import (
+        from jina.peapods.runtimes.gateway.http.models import (
             JinaStatusModel,
             JinaRequestModel,
             JinaEndpointRequestModel,
@@ -58,27 +66,24 @@ def get_fastapi_app(args: 'argparse.Namespace', logger: 'JinaLogger'):
             'CORS is enabled. This service is now accessible from any website!'
         )
 
-    if args.grpc_data_requests:
-        from ....stream.gateway import GrpcGatewayStreamer
+    from jina.peapods.stream import RequestStreamer
+    from jina.peapods.runtimes.gateway.request_handling import (
+        handle_request,
+        handle_result,
+    )
 
-        iolet = Grpclet(
-            args=args,
-            message_callback=None,
-            logger=logger,
-        )
-        streamer = GrpcGatewayStreamer(args, iolet)
-    else:
-        from ....stream.gateway import ZmqGatewayStreamer
-
-        iolet = AsyncZmqlet(args, logger)
-        streamer = ZmqGatewayStreamer(args, iolet)
+    streamer = RequestStreamer(
+        args=args,
+        request_handler=handle_request(
+            graph=topology_graph, connection_pool=connection_pool
+        ),
+        result_handler=handle_result,
+    )
+    streamer.Call = streamer.stream
 
     @app.on_event('shutdown')
     async def _shutdown():
-        if inspect.iscoroutinefunction(iolet.close):
-            await iolet.close()
-        else:
-            iolet.close()
+        await connection_pool.close()
 
     openapi_tags = []
     if not args.no_debug_endpoints:
@@ -114,7 +119,7 @@ def get_fastapi_app(args: 'argparse.Namespace', logger: 'JinaLogger'):
         @app.post(
             path='/post',
             summary='Post a data request to some endpoint',
-            response_model=PROTO_TO_PYDANTIC_MODELS.RequestProto,
+            response_model=PROTO_TO_PYDANTIC_MODELS.DataRequestProto,
             tags=['Debug']
             # do not add response_model here, this debug endpoint should not restricts the response model
         )

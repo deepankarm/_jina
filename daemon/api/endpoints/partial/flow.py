@@ -4,11 +4,11 @@ from fastapi import APIRouter
 from jina.helper import ArgNamespace
 from jina.parsers.flow import set_flow_parser
 
-from ....models import FlowModel
-from ....models.ports import PortMappings
-from ....models.partial import PartialFlowItem
-from ....excepts import PartialDaemon400Exception
-from ....stores import partial_store as store
+from daemon.models import FlowModel
+from daemon.models.ports import PortMappings
+from daemon.models.partial import PartialFlowItem
+from daemon.excepts import PartialDaemon400Exception
+from daemon.stores import partial_store as store
 
 router = APIRouter(prefix='/flow', tags=['flow'])
 
@@ -59,7 +59,7 @@ async def rolling_update(
     .. #noqa: DAR201
     """
     try:
-        return store.rolling_update(pod_name=pod_name, uses_with=uses_with)
+        return await store.rolling_update(pod_name=pod_name, uses_with=uses_with)
     except ValueError as ex:
         raise PartialDaemon400Exception from ex
 
@@ -76,7 +76,7 @@ async def scale(pod_name: str, replicas: int):
     .. #noqa: DAR201
     """
     try:
-        return store.scale(pod_name=pod_name, replicas=replicas)
+        return await store.scale(pod_name=pod_name, replicas=replicas)
     except ValueError as ex:
         raise PartialDaemon400Exception from ex
 

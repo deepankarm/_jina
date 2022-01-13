@@ -12,6 +12,7 @@ IMG_NAME = 'jina/scale-executor'
 
 NUM_CONCURRENT_CLIENTS = 20
 NUM_DOCS_SENT_BY_CLIENTS = 50
+exposed_port = 12345
 
 
 class ScalableExecutor(Executor):
@@ -47,9 +48,9 @@ def pod_params(request):
 
 
 @pytest.fixture
-def flow_with_zed_runtime(pod_params):
+def flow_with_worker_runtime(pod_params):
     num_replicas, scale_to, shards = pod_params
-    return Flow().add(
+    return Flow(port_expose=exposed_port).add(
         name='executor',
         uses=ScalableExecutor,
         replicas=num_replicas,
@@ -61,7 +62,7 @@ def flow_with_zed_runtime(pod_params):
 @pytest.fixture
 def flow_with_container_runtime(pod_params, docker_image_built):
     num_replicas, scale_to, shards = pod_params
-    return Flow().add(
+    return Flow(port_expose=exposed_port).add(
         name='executor',
         uses=f'docker://{IMG_NAME}',
         replicas=num_replicas,
@@ -70,7 +71,7 @@ def flow_with_container_runtime(pod_params, docker_image_built):
     )
 
 
-@pytest.fixture(params=['flow_with_zed_runtime', 'flow_with_container_runtime'])
+@pytest.fixture(params=['flow_with_worker_runtime', 'flow_with_container_runtime'])
 def flow_with_runtime(request):
     return request.getfixturevalue(request.param)
 
@@ -81,20 +82,20 @@ def flow_with_runtime(request):
         (2, 3, 1),  # scale up 1 replica with 1 shard
         (2, 3, 2),  # scale up 1 replica with 2 shards
         (3, 1, 1),  # scale down 2 replicas with 1 shard
-        (3, 1, 2),  # scale down 2 replicas with 1 shard
+        (3, 1, 2),  # scale down 2 replicas with 2 shards
     ],
     indirect=True,
 )
 def test_scale_success(flow_with_runtime, pod_params):
     num_replicas, scale_to, shards = pod_params
     with flow_with_runtime as f:
-        ret1 = f.index(
+        ret1 = Client(port=exposed_port).index(
             inputs=DocumentArray([Document() for _ in range(200)]),
             return_results=True,
             request_size=10,
         )
         f.scale(pod_name='executor', replicas=scale_to)
-        ret2 = f.index(
+        ret2 = Client(port=exposed_port).index(
             inputs=DocumentArray([Document() for _ in range(200)]),
             return_results=True,
             request_size=10,
@@ -142,9 +143,8 @@ def test_scale_with_concurrent_client(flow_with_runtime, pod_params, protocol):
 
     num_replicas, scale_to, _ = pod_params
     queue = multiprocessing.Queue()
-
+    flow_with_runtime.protocol = protocol
     with flow_with_runtime as f:
-        f.protocol = protocol
         port_expose = f.port_expose
 
         thread_pool = []

@@ -4,7 +4,7 @@ from jina.peapods.runtimes.gateway.http.models import (
     PROTO_TO_PYDANTIC_MODELS,
     JinaRequestModel,
 )
-from jina.types.document import Document
+from jina import Document
 from tests import random_docs
 
 
@@ -31,11 +31,6 @@ def test_enum_definitions():
         'definitions'
     ]['StatusCode']
     assert status_code_enum_definition['enum'] == [0, 1, 2, 3, 4, 5, 6]
-
-    command_enum_definition = PROTO_TO_PYDANTIC_MODELS.RequestProto().schema()[
-        'definitions'
-    ]['Command']
-    assert command_enum_definition['enum'] == [0, 1, 2, 3, 4, 5, 6]
 
 
 def test_all_fields_in_document_proto():
@@ -102,17 +97,13 @@ def test_oneof_validation_error():
 
     with pytest.raises(pydantic.error_wrappers.ValidationError) as error:
         doc = PROTO_TO_PYDANTIC_MODELS.DocumentProto(text='abc', buffer=b'abc')
-    assert "only one field among ['buffer', 'blob', 'text', 'graph']" in str(
-        error.value
-    )
+    assert "only one field among ['buffer', 'blob', 'text']" in str(error.value)
 
     with pytest.raises(pydantic.error_wrappers.ValidationError) as error:
         doc = PROTO_TO_PYDANTIC_MODELS.DocumentProto(
             text='abc', buffer=b'abc', blob=PROTO_TO_PYDANTIC_MODELS.NdArrayProto()
         )
-    assert "only one field among ['buffer', 'blob', 'text', 'graph']" in str(
-        error.value
-    )
+    assert "only one field among ['buffer', 'blob', 'text']" in str(error.value)
 
 
 def test_tags_document():

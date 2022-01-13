@@ -2,10 +2,10 @@ from typing import Optional, Dict, Any
 
 from fastapi import Depends, APIRouter, HTTPException
 
-from ... import Runtime400Exception
-from ..dependencies import PodDepends
-from ...models import DaemonID, ContainerItem, ContainerStoreStatus, PodModel
-from ...stores import pod_store as store
+from daemon import Runtime400Exception
+from daemon.api.dependencies import PodDepends
+from daemon.models import DaemonID, ContainerItem, ContainerStoreStatus, PodModel
+from daemon.stores import pod_store as store
 
 router = APIRouter(prefix='/pods', tags=['pods'])
 
@@ -49,16 +49,9 @@ async def _create(pod: PodDepends = Depends(PodDepends)):
 )
 async def _rolling_update(
     id: DaemonID,
-    dump_path: Optional[str] = None,
     uses_with: Optional[Dict[str, Any]] = None,
 ):
     try:
-        if dump_path is not None:
-            if uses_with is not None:
-                uses_with['dump_path'] = dump_path
-            else:
-                uses_with = {'dump_path': dump_path}
-
         return await store.rolling_update(id=id, uses_with=uses_with)
     except Exception as ex:
         raise Runtime400Exception from ex

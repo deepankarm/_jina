@@ -5,11 +5,11 @@ import inspect
 from functools import wraps
 from typing import Callable, Union, List, Optional, Dict, Sequence, TYPE_CHECKING
 
-from .metas import get_default_metas
-from ..helper import convert_tuple_to_list
+from jina.executors.metas import get_default_metas
+from jina.helper import convert_tuple_to_list, iscoroutinefunction
 
 if TYPE_CHECKING:
-    from ..types.arrays import DocumentArray
+    from jina import DocumentArray
 
 
 def wrap_func(cls, func_lst, wrapper):
@@ -87,7 +87,7 @@ def requests(
     :param on: the endpoint string, by convention starts with `/`
     :return: decorated function
     """
-    from .. import __default_endpoint__, __args_executor_func__
+    from jina import __default_endpoint__, __args_executor_func__
 
     class FunctionMapper:
         def __init__(self, fn):
@@ -101,11 +101,20 @@ def requests(
                     f'please add `**kwargs` to the function signature.'
                 )
 
-            @functools.wraps(fn)
-            def arg_wrapper(*args, **kwargs):
-                return fn(*args, **kwargs)
+            if iscoroutinefunction(fn):
 
-            self.fn = arg_wrapper
+                @functools.wraps(fn)
+                async def arg_wrapper(*args, **kwargs):
+                    return await fn(*args, **kwargs)
+
+                self.fn = arg_wrapper
+            else:
+
+                @functools.wraps(fn)
+                def arg_wrapper(*args, **kwargs):
+                    return fn(*args, **kwargs)
+
+                self.fn = arg_wrapper
 
         def __set_name__(self, owner, name):
             self.fn.class_name = owner.__name__

@@ -1,17 +1,14 @@
 def list_all_runtimes():
-    """List all public runtimes that can be used directly with :class:`jina.peapods.peas.BasePea`
+    """List all public runtimes that can be used directly with :class:`jina.peapods.peas.Pea`
 
     # noqa: DAR101
     # noqa: DAR201
     """
-    from ...peapods.runtimes.base import BaseRuntime
-    from .gateway.grpc import GRPCRuntime
-    from .gateway.http import HTTPRuntime
-    from .gateway.websocket import WebSocketRuntime
-    from .container import ContainerRuntime
-    from .jinad import JinadRuntime
-    from .zmq.zed import ZEDRuntime
-    from .grpc import GRPCDataRuntime
+    from jina.peapods.runtimes.base import BaseRuntime
+    from jina.peapods.runtimes.gateway.grpc import GRPCGatewayRuntime
+    from jina.peapods.runtimes.gateway.http import HTTPGatewayRuntime
+    from jina.peapods.runtimes.gateway.websocket import WebSocketGatewayRuntime
+    from jina.peapods.runtimes.worker import WorkerRuntime
 
     return [
         k
@@ -26,14 +23,12 @@ def get_runtime(name: str):
     # noqa: DAR101
     # noqa: DAR201
     """
-    from ...peapods.runtimes.base import BaseRuntime
-    from .gateway.grpc import GRPCRuntime
-    from .gateway.http import HTTPRuntime
-    from .gateway.websocket import WebSocketRuntime
-    from .container import ContainerRuntime
-    from .jinad import JinadRuntime
-    from .zmq.zed import ZEDRuntime
-    from .grpc import GRPCDataRuntime
+    from jina.peapods.runtimes.base import BaseRuntime
+    from jina.peapods.runtimes.gateway.grpc import GRPCGatewayRuntime
+    from jina.peapods.runtimes.gateway.http import HTTPGatewayRuntime
+    from jina.peapods.runtimes.gateway.websocket import WebSocketGatewayRuntime
+    from jina.peapods.runtimes.worker import WorkerRuntime
+    from jina.peapods.runtimes.head import HeadRuntime
 
     s = locals()[name]
     if isinstance(s, type) and issubclass(s, BaseRuntime):

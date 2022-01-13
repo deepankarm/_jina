@@ -7,7 +7,7 @@ import torchvision.models as models
 from transformers import AutoModel, AutoTokenizer
 
 from jina import Executor, DocumentArray, requests, Document
-from jina.types.arrays.memmap import DocumentArrayMemmap
+from jina import DocumentArrayMemmap
 
 
 class Segmenter(Executor):
@@ -89,7 +89,7 @@ class TextCrafter(Executor):
     @requests()
     def filter(self, docs: DocumentArray, **kwargs):
         filtered_docs = DocumentArray(
-            d for d in docs.traverse_flat(['c']) if d.mime_type == 'text/plain'
+            d for d in docs.traverse_flat('c') if d.mime_type == 'text/plain'
         )
         return filtered_docs
 
@@ -98,7 +98,7 @@ class ImageCrafter(Executor):
     @requests(on=['/index', '/search'])
     def craft(self, docs: DocumentArray, **kwargs):
         filtered_docs = DocumentArray(
-            d for d in docs.traverse_flat(['c']) if d.mime_type == 'image/jpeg'
+            d for d in docs.traverse_flat('c') if d.mime_type == 'image/jpeg'
         )
         target_size = 224
         for doc in filtered_docs:

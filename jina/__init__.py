@@ -14,9 +14,10 @@ import signal as _signal
 import sys as _sys
 import types as _types
 import warnings as _warnings
+import docarray as _docarray
 
-if _sys.version_info < (3, 7, 0) or _sys.version_info >= (3, 10, 0):
-    raise OSError(f'Jina requires Python 3.7/3.8/3.9, but yours is {_sys.version_info}')
+if _sys.version_info < (3, 7, 0):
+    raise OSError(f'Jina requires Python >= 3.7, but yours is {_sys.version_info}')
 
 __windows__ = _sys.platform == 'win32'
 
@@ -58,11 +59,12 @@ elif _sys.version_info >= (3, 8, 0) and _platform.system() == 'Darwin':
 # this is managed by git tag and updated on every release
 # NOTE: this represents the NEXT release version
 
-__version__ = '2.5.4'
+__version__ = '2.6.5'
 
 # do not change this line manually
 # this is managed by proto/build-proto.sh and updated on every execution
-__proto_version__ = '0.0.86'
+__proto_version__ = '0.1.6'
+__docarray_version__ = _docarray.__version__
 
 __uptime__ = _datetime.datetime.now().isoformat()
 
@@ -99,6 +101,7 @@ __default_host__ = _os.environ.get(
 )
 __docker_host__ = 'host.docker.internal'
 __default_executor__ = 'BaseExecutor'
+__default_reducer_executor__ = 'ReducerExecutor'
 __default_endpoint__ = '/default'
 __ready_msg__ = 'ready and listening'
 __stop_msg__ = 'terminated'
@@ -193,9 +196,7 @@ _set_nofile()
 from jina.clients import Client
 
 # Document
-from jina.types.document import Document
-from jina.types.arrays.document import DocumentArray
-from jina.types.arrays.memmap import DocumentArrayMemmap
+from docarray import Document, DocumentArray, DocumentArrayMemmap
 
 # Executor
 from jina.executors import BaseExecutor as Executor

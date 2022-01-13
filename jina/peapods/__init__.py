@@ -1,4 +1,4 @@
-from .peas import BasePea as Pea
-from .pods import BasePod
-from .pods import Pod
-from .pods.compound import CompoundPod
+from jina.peapods.peas import BasePea
+from jina.peapods.peas import Pea
+from jina.peapods.pods import BasePod
+from jina.peapods.pods import Pod

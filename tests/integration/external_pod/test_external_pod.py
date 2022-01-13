@@ -1,16 +1,16 @@
 import pytest
 
-from jina.peapods.pods.factory import PodFactory
-from jina.peapods import Pea
+from jina.peapods.pods import Pod
+from jina.peapods.peas.factory import PeaFactory
 from jina.parsers import set_pod_parser, set_pea_parser
 
 from jina import Flow, Executor, requests, Document, DocumentArray
 from jina.helper import random_port
 
 
-def validate_response(resp, expected_docs=50):
-    assert len(resp.data.docs) == expected_docs
-    for doc in resp.data.docs:
+def validate_response(docs, expected_docs=50):
+    assert len(docs) == expected_docs
+    for doc in docs:
         assert 'external_real' in doc.tags['name']
 
 
@@ -52,7 +52,7 @@ def external_pod_args(num_replicas, num_shards):
 
 @pytest.fixture
 def external_pod(external_pod_args):
-    return PodFactory.build_pod(external_pod_args)
+    return Pod(external_pod_args)
 
 
 class MyExternalExecutor(Executor):
@@ -75,7 +75,6 @@ def test_flow_with_external_pod(
         del external_args['name']
         del external_args['external']
         del external_args['pod_role']
-        del external_args['dynamic_routing']
         flow = Flow().add(
             **external_args,
             name='external_fake',
@@ -83,46 +82,9 @@ def test_flow_with_external_pod(
         )
         with flow:
             resp = flow.index(inputs=input_docs, return_results=True)
-        validate_response(resp[0], 50 * num_shards)
 
-
-@pytest.fixture(scope='function')
-def external_executor_args():
-    args = [
-        '--uses',
-        'MyExternalExecutor',
-        '--name',
-        'external_real',
-        '--port-in',
-        str(random_port()),
-        '--host-in',
-        '0.0.0.0',
-        '--socket-in',
-        'ROUTER_BIND',
-        '--dynamic-routing-out',
-    ]
-    return set_pea_parser().parse_args(args)
-
-
-@pytest.fixture
-def external_executor(external_executor_args):
-    return Pea(external_executor_args)
-
-
-def test_flow_with_external_executor(
-    external_executor, external_executor_args, input_docs
-):
-    with external_executor:
-        external_args = vars(external_executor_args)
-        del external_args['name']
-        flow = Flow().add(
-            **external_args,
-            name='external_fake',
-            external=True,
-        )
-        with flow:
-            resp = flow.index(inputs=input_docs, return_results=True)
-        validate_response(resp[0])
+        # expect 50 reduced Documents in total after sharding
+        validate_response(resp, 50)
 
 
 @pytest.mark.parametrize('num_replicas', [2], indirect=True)
@@ -135,7 +97,6 @@ def test_two_flow_with_shared_external_pod(
         del external_args['name']
         del external_args['external']
         del external_args['pod_role']
-        del external_args['dynamic_routing']
         flow1 = Flow().add(
             **external_args,
             name='external_fake',
@@ -154,42 +115,13 @@ def test_two_flow_with_shared_external_pod(
         )
         with flow1, flow2:
             results = flow1.index(inputs=input_docs, return_results=True)
-            validate_response(results[0], 50 * num_shards)
 
+            # Reducing applied after shards, expect only 50 docs
+            validate_response(results, 50)
+
+            # Reducing applied after sharding, but not for the needs, expect 100 docs
             results = flow2.index(inputs=input_docs, return_results=True)
-            validate_response(results[0], 50 * num_shards * 2)
-
-
-def test_two_flow_with_shared_external_executor(
-    external_executor,
-    external_executor_args,
-    input_docs,
-):
-    with external_executor:
-        external_args = vars(external_executor_args)
-        del external_args['name']
-        flow1 = Flow().add(
-            **external_args,
-            name='external_fake',
-            external=True,
-        )
-
-        flow2 = (
-            Flow()
-            .add(name='foo')
-            .add(
-                **external_args,
-                name='external_fake',
-                external=True,
-                needs=['gateway', 'foo'],
-            )
-        )
-        with flow1, flow2:
-            results = flow1.index(inputs=input_docs, return_results=True)
-            validate_response(results[0])
-
-            results = flow2.index(inputs=input_docs, return_results=True)
-            validate_response(results[0], 50 * 2)
+            validate_response(results, 100)
 
 
 @pytest.fixture(scope='function')
@@ -201,8 +133,6 @@ def external_pod_shards_1_args(num_replicas, num_shards):
         'external_real_1',
         '--port-in',
         str(random_port()),
-        '--host-in',
-        '0.0.0.0',
         '--shards',
         str(num_shards),
         '--replicas',
@@ -215,7 +145,7 @@ def external_pod_shards_1_args(num_replicas, num_shards):
 
 @pytest.fixture
 def external_pod_shards_1(external_pod_shards_1_args):
-    return PodFactory.build_pod(external_pod_shards_1_args)
+    return Pod(external_pod_shards_1_args)
 
 
 @pytest.fixture(scope='function')
@@ -227,8 +157,6 @@ def external_pod_shards_2_args(num_replicas, num_shards):
         'external_real_2',
         '--port-in',
         str(random_port()),
-        '--host-in',
-        '0.0.0.0',
         '--shards',
         str(num_shards),
         '--replicas',
@@ -241,7 +169,7 @@ def external_pod_shards_2_args(num_replicas, num_shards):
 
 @pytest.fixture
 def external_pod_shards_2(external_pod_shards_2_args):
-    return PodFactory.build_pod(external_pod_shards_2_args)
+    return Pod(external_pod_shards_2_args)
 
 
 @pytest.mark.parametrize('num_replicas', [1, 2], indirect=True)
@@ -261,11 +189,9 @@ def test_flow_with_external_pod_shards(
         del external_args_1['name']
         del external_args_1['external']
         del external_args_1['pod_role']
-        del external_args_1['dynamic_routing']
         del external_args_2['name']
         del external_args_2['external']
         del external_args_2['pod_role']
-        del external_args_2['dynamic_routing']
         flow = (
             Flow()
             .add(name='executor1')
@@ -286,7 +212,9 @@ def test_flow_with_external_pod_shards(
 
         with flow:
             resp = flow.index(inputs=input_docs, return_results=True)
-        validate_response(resp[0], 50 * num_shards * 2)
+
+        # Reducing applied on shards and needs, expect 50 docs
+        validate_response(resp, 50)
 
 
 @pytest.fixture(scope='function')
@@ -298,8 +226,6 @@ def external_pod_pre_shards_args(num_replicas, num_shards):
         'external_real',
         '--port-in',
         str(random_port()),
-        '--host-in',
-        '0.0.0.0',
         '--shards',
         str(num_shards),
         '--replicas',
@@ -312,7 +238,7 @@ def external_pod_pre_shards_args(num_replicas, num_shards):
 
 @pytest.fixture
 def external_pod_pre_shards(external_pod_pre_shards_args):
-    return PodFactory.build_pod(external_pod_pre_shards_args)
+    return Pod(external_pod_pre_shards_args)
 
 
 @pytest.mark.parametrize('num_replicas', [1, 2], indirect=True)
@@ -329,7 +255,6 @@ def test_flow_with_external_pod_pre_shards(
         del external_args['name']
         del external_args['external']
         del external_args['pod_role']
-        del external_args['dynamic_routing']
         flow = (
             Flow()
             .add(
@@ -349,7 +274,9 @@ def test_flow_with_external_pod_pre_shards(
         )
         with flow:
             resp = flow.index(inputs=input_docs, return_results=True)
-        validate_response(resp[0], 50 * num_shards * 2)
+
+        # Reducing applied on shards and needs, expect 50 docs
+        validate_response(resp, 50)
 
 
 @pytest.fixture(scope='function')
@@ -361,8 +288,6 @@ def external_pod_join_args(num_replicas, num_shards):
         'external_real',
         '--port-in',
         str(random_port()),
-        '--host-in',
-        '0.0.0.0',
         '--pod-role',
         'JOIN',
         '--shards',
@@ -377,7 +302,7 @@ def external_pod_join_args(num_replicas, num_shards):
 
 @pytest.fixture
 def external_pod_join(external_pod_join_args):
-    return PodFactory.build_pod(external_pod_join_args)
+    return Pod(external_pod_join_args)
 
 
 @pytest.mark.parametrize('num_replicas', [1, 2], indirect=True)
@@ -394,7 +319,6 @@ def test_flow_with_external_pod_join(
         del external_args['name']
         del external_args['external']
         del external_args['pod_role']
-        del external_args['dynamic_routing']
         flow = (
             Flow()
             .add(
@@ -417,4 +341,6 @@ def test_flow_with_external_pod_join(
         )
         with flow:
             resp = flow.index(inputs=input_docs, return_results=True)
-        validate_response(resp[0], 50 * num_shards * num_shards * 2)
+
+        # Reducing applied for shards, not for uses, expect 100 docs
+        validate_response(resp, 100)

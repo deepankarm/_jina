@@ -73,10 +73,6 @@ class BadClientInput(BadClient, BaseJinaExeception):
     """Error in the request generator function on the client side."""
 
 
-class BadDocType(TypeError, BaseJinaExeception):
-    """Exception when can not construct a document from the given data."""
-
-
 class BadRequestType(TypeError, BaseJinaExeception):
     """Exception when can not construct a request object from given data."""
 
@@ -107,10 +103,6 @@ class DaemonPeaCreationFailed(Exception, BaseJinaExeception):
 
 class NotSupportedError(Exception, BaseJinaExeception):
     """Exception when user accidentally using a retired argument."""
-
-
-class RoutingTableCyclicError(Exception, BaseJinaExeception):
-    """Raised when the routing graph has cycles."""
 
 
 class RuntimeRunForeverEarlyError(Exception, BaseJinaExeception):

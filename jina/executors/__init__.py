@@ -1,14 +1,27 @@
+from concurrent.futures import ThreadPoolExecutor
+from typing import TYPE_CHECKING, Any
 import inspect
 import os
 from types import SimpleNamespace
-from typing import Dict, Optional, Type
+from typing import Dict, Optional, Type, List
 
-from .decorators import store_init_kwargs, wrap_func
-from .. import __default_endpoint__, __args_executor_init__
-from ..helper import typename, ArgNamespace, T
-from ..jaml import JAMLCompatible, JAML, subvar_regex, internal_var_regex
+from jina.executors.decorators import store_init_kwargs, wrap_func, requests
+from jina import __default_endpoint__, __args_executor_init__
+from jina.helper import (
+    typename,
+    ArgNamespace,
+    T,
+    iscoroutinefunction,
+    run_in_threadpool,
+)
+from jina.jaml import JAMLCompatible, JAML, subvar_regex, internal_var_regex
 
-__all__ = ['BaseExecutor']
+
+if TYPE_CHECKING:
+    from jina import DocumentArray
+
+
+__all__ = ['BaseExecutor', 'ReducerExecutor']
 
 
 class ExecutorType(type(JAMLCompatible), type):
@@ -93,6 +106,7 @@ class BaseExecutor(JAMLCompatible, metaclass=ExecutorType):
         :param runtime_args: a dict of arguments injected from :class:`Runtime` during runtime
         :param kwargs: additional extra keyword arguments to avoid failing when extra params ara passed that are not expected
         """
+        self._thread_pool = ThreadPoolExecutor(max_workers=1)
         self._add_metas(metas)
         self._add_requests(requests)
         self._add_runtime_args(runtime_args)
@@ -128,7 +142,7 @@ class BaseExecutor(JAMLCompatible, metaclass=ExecutorType):
                     )
 
     def _add_metas(self, _metas: Optional[Dict]):
-        from .metas import get_default_metas
+        from jina.executors.metas import get_default_metas
 
         tmp = get_default_metas()
 
@@ -198,6 +212,24 @@ class BaseExecutor(JAMLCompatible, metaclass=ExecutorType):
                 self, **kwargs
             )  # unbound method, self is required
 
+    async def __acall__(self, req_endpoint: str, **kwargs):
+        """
+        # noqa: DAR101
+        # noqa: DAR102
+        # noqa: DAR201
+        """
+        if req_endpoint in self.requests:
+            return await self.__acall_endpoint__(req_endpoint, **kwargs)
+        elif __default_endpoint__ in self.requests:
+            return await self.__acall_endpoint__(__default_endpoint__, **kwargs)
+
+    async def __acall_endpoint__(self, req_endpoint, **kwargs):
+        func = self.requests[req_endpoint]
+        if iscoroutinefunction(func):
+            return await func(self, **kwargs)
+        else:
+            return await run_in_threadpool(func, self._thread_pool, self, **kwargs)
+
     @property
     def workspace(self) -> Optional[str]:
         """
@@ -214,7 +246,7 @@ class BaseExecutor(JAMLCompatible, metaclass=ExecutorType):
             shard_id = getattr(
                 self.runtime_args,
                 'shard_id',
-                getattr(self.runtime_args, 'pea_id', None),
+                None,
             )
             if replica_id is not None and replica_id != -1:
                 complete_workspace = os.path.join(complete_workspace, str(replica_id))
@@ -231,19 +263,31 @@ class BaseExecutor(JAMLCompatible, metaclass=ExecutorType):
         self.close()
 
     @classmethod
-    def from_hub(cls: Type[T], uri: str, **kwargs) -> T:
+    def from_hub(
+        cls: Type[T],
+        uri: str,
+        context: Optional[Dict[str, Any]] = None,
+        uses_with: Optional[Dict] = None,
+        uses_metas: Optional[Dict] = None,
+        uses_requests: Optional[Dict] = None,
+        **kwargs,
+    ) -> T:
         """Construct an Executor from Hub.
 
         :param uri: a hub Executor scheme starts with `jinahub://`
+        :param context: context replacement variables in a dict, the value of the dict is the replacement.
+        :param uses_with: dictionary of parameters to overwrite from the default config's with field
+        :param uses_metas: dictionary of parameters to overwrite from the default config's metas field
+        :param uses_requests: dictionary of parameters to overwrite from the default config's requests field
         :param kwargs: other kwargs accepted by the CLI ``jina hub pull``
         :return: the Hub Executor object.
         """
-        from ..hubble.helper import is_valid_huburi
+        from jina.hubble.helper import is_valid_huburi
 
         _source = None
         if is_valid_huburi(uri):
-            from ..hubble.hubio import HubIO
-            from ..parsers.hubble import set_hub_pull_parser
+            from jina.hubble.hubio import HubIO
+            from jina.parsers.hubble import set_hub_pull_parser
 
             _args = ArgNamespace.kwargs2namespace(
                 {'no_usage': True, **kwargs},
@@ -257,4 +301,32 @@ class BaseExecutor(JAMLCompatible, metaclass=ExecutorType):
                 f'Can not construct a native Executor from {uri}. Looks like you want to use it as a '
                 f'Docker container, you may want to use it in the Flow via `.add(uses={uri})` instead.'
             )
-        return cls.load_config(_source)
+        return cls.load_config(
+            _source,
+            context=context,
+            uses_with=uses_with,
+            uses_metas=uses_metas,
+            uses_requests=uses_requests,
+        )
+
+
+class ReducerExecutor(BaseExecutor):
+    """
+    ReducerExecutor is an Executor that performs a reduce operation on a matrix of DocumentArrays coming from shards.
+    ReducerExecutor relies on DocumentArray.reduce_all to merge all DocumentArray into one DocumentArray which will be
+    sent to the next pod.
+
+    This Executor only adds a reduce endpoint to the BaseExecutor.
+    """
+
+    @requests
+    def reduce(self, docs_matrix: List['DocumentArray'] = [], **kwargs):
+        """Reduce docs_matrix into one `DocumentArray` using `DocumentArray.reduce_all`
+        :param docs_matrix: a List of DocumentArrays to be reduced
+        :param kwargs: extra keyword arguments
+        :return: the reduced DocumentArray
+        """
+        if docs_matrix:
+            da = docs_matrix[0]
+            da.reduce_all(docs_matrix[1:])
+            return da

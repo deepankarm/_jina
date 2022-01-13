@@ -8,7 +8,7 @@ from jina.importer import ImportExtensions
 from jina.logging.predefined import default_logger
 from jina.logging.profile import ProgressBar
 from jina.parsers.helloworld import set_hw_chatbot_parser
-from jina.types.document.generators import from_csv
+from jina import DocumentArray
 
 if __name__ == '__main__':
     from my_executors import MyTransformer, MyIndexer
@@ -19,7 +19,7 @@ else:
 def _get_flow(args):
     """Ensure the same flow is used in hello world example and system test."""
     return (
-        Flow(cors=True)
+        Flow(cors=True, protocol='http', port_expose=args.port_expose)
         .add(uses=MyTransformer, replicas=args.replicas)
         .add(uses=MyIndexer, workspace=args.workdir)
     )
@@ -60,15 +60,11 @@ def hello_world(args):
     # index it!
     with f:
         f.index(
-            from_csv(
+            DocumentArray.from_csv(
                 targets['covid-csv']['filename'], field_resolver={'question': 'text'}
             ),
             show_progress=True,
         )
-
-        # switch to REST gateway at runtime
-        f.protocol = 'http'
-        f.port_expose = args.port_expose
 
         url_html_path = 'file://' + os.path.abspath(
             os.path.join(
