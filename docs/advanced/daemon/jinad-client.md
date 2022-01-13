@@ -10,6 +10,7 @@ from daemon.clients import JinaDClient
 
 client = JinaDClient(host=HOST, port=PORT)
 assert client.alive
+
 ```
 
 or,
