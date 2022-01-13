@@ -20,6 +20,7 @@ from daemon.clients import AsyncJinaDClient
 
 client = AsyncJinaDClient(host=HOST, port=PORT)
 assert await client.alive
+
 ```
 
 ## Get the status of the remote server
